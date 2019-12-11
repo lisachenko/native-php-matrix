@@ -16,6 +16,7 @@
     "autoload": {
         "psr-4" : {
             "Native\\Type\\" : "src/"
-        }
+        },
+        "files": ["bootstrap.php"]
     }
 }
