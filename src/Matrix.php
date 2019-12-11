@@ -134,6 +134,28 @@ class Matrix implements ObjectCreateInterface, ObjectDoOperationInterface, Objec
     }
 
     /**
+     * Performs exponential expression by scalar value
+     *
+     * @param int|float $value Exponent
+     *
+     * @return $this
+     */
+    public function powByScalar($value): self
+    {
+        if (!is_numeric($value)) {
+            throw new \InvalidArgumentException("Exponent accepts only numeric values");
+        }
+        $result = [];
+        for ($i = 0; $i < $this->rows; ++$i) {
+            for ($j = 0; $j < $this->columns; ++$j) {
+                $result[$i][$j] = $this->matrix[$i][$j] ** $value;
+            }
+        }
+
+        return new static($result);
+    }
+
+    /**
      * Performs addition of two matrices
      *
      * @param Matrix $value
@@ -237,6 +259,11 @@ class Matrix implements ObjectCreateInterface, ObjectDoOperationInterface, Objec
             case OpCode::DIV:
                 if ($isLeftMatrix && $isRightNumeric) {
                     return $left->divideByScalar($right);
+                }
+                break;
+            case OpCode::POW:
+                if ($isLeftMatrix && $isRightNumeric) {
+                    return $left->powByScalar($right);
                 }
                 break;
         }
