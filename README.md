@@ -7,9 +7,9 @@ operators of comparison, addition, multiplication, casting and much more!
 
 This library is first ever userland PHP extension, that implements operator overloading for the `Matrix` class.
 
-[![GitHub release](https://img.shields.io/github/release/lisachenko/native-matrix.svg)](https://github.com/lisachenko/native-matrix/releases/latest)
+[![GitHub release](https://img.shields.io/github/release/lisachenko/native-types.svg)](https://github.com/lisachenko/native-types/releases/latest)
 [![Minimum PHP Version](http://img.shields.io/badge/php-%3E%3D%207.4-8892BF.svg)](https://php.net/)
-[![License](https://img.shields.io/packagist/l/lisachenko/native-matrix.svg)](https://packagist.org/packages/lisachenko/native-matrix)
+[![License](https://img.shields.io/packagist/l/lisachenko/native-types.svg)](https://packagist.org/packages/lisachenko/native-types)
 
 
 Pre-requisites and initialization
