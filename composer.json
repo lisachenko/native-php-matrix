@@ -1,6 +1,6 @@
 {
-    "name": "lisachenko/native-matrix",
-    "description": "PHP Library that provides an implementation of userland Matrix, powered with overloaded operators",
+    "name": "lisachenko/native-types",
+    "description": "PHP Library that provides an implementation of userland types, powered with overloaded operators",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -10,6 +10,12 @@
         }
     ],
     "require": {
-        "lisachenko/z-engine": "^0.6.0"
+        "lisachenko/z-engine": "^0.6.0",
+        "php": "~7.4"
+    },
+    "autoload": {
+        "psr-4" : {
+            "ZEngine\\Type\\" : "src/"
+        }
     }
 }
