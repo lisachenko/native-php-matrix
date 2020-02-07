@@ -12,6 +12,8 @@ declare(strict_types = 1);
 namespace Native\Type;
 
 use InvalidArgumentException;
+use ZEngine\ClassExtension\Hook\CompareValuesHook;
+use ZEngine\ClassExtension\Hook\DoOperationHook;
 use ZEngine\ClassExtension\ObjectCompareValuesInterface;
 use ZEngine\ClassExtension\ObjectCreateInterface;
 use ZEngine\ClassExtension\ObjectCreateTrait;
@@ -221,16 +223,18 @@ class Matrix implements ObjectCreateInterface, ObjectDoOperationInterface, Objec
     }
 
     /**
-     * Performs operation on given object
+     * Performs an operation on given object
      *
-     * @param int $opCode Operation code
-     * @param Matrix|int|float $left left side of operation
-     * @param Matrix|int|float $right Right side of operation
+     * @param DoOperationHook $hook Instance of current hook
      *
-     * @return Matrix Result of operation value
+     * @return mixed Result of operation value
      */
-    public static function __doOperation(int $opCode, $left, $right): Matrix
+    public static function __doOperation(DoOperationHook $hook): Matrix
     {
+        $left   = $hook->getFirst();
+        $right  = $hook->getSecond();
+        $opCode = $hook->getOpcode();
+
         $isLeftMatrix   = $left instanceof Matrix;
         $isRightMatrix  = $right instanceof Matrix;
         $isLeftNumeric  = is_numeric($left);
@@ -274,13 +278,14 @@ class Matrix implements ObjectCreateInterface, ObjectDoOperationInterface, Objec
     /**
      * Performs comparison of given object with another value
      *
-     * @param mixed $one     First side of operation
-     * @param mixed $another Another side of operation
+     * @param CompareValuesHook $hook Instance of current hook
      *
      * @return int Result of comparison: 1 is greater, -1 is less, 0 is equal
      */
-    public static function __compare($one, $another): int
+    public static function __compare(CompareValuesHook $hook): int
     {
+        $one     = $hook->getFirst();
+        $another = $hook->getSecond();
         if (!($one instanceof Matrix) || !($another instanceof Matrix)) {
             throw new \InvalidArgumentException('Matrix can be compared only with another matrix');
         }

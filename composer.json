@@ -10,7 +10,7 @@
         }
     ],
     "require": {
-        "lisachenko/z-engine": "^0.6.0",
+        "lisachenko/z-engine": "^0.7",
         "php": "~7.4"
     },
     "autoload": {
