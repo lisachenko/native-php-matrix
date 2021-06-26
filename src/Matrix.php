@@ -61,6 +61,11 @@ class Matrix implements ObjectCreateInterface, ObjectDoOperationInterface, Objec
         return $this->columns === $this->rows;
     }
 
+    public function toArray(): array
+    {
+        return $this->matrix;
+    }
+
     /**
      * Performs multiplication of two matrices
      *
@@ -162,13 +167,14 @@ class Matrix implements ObjectCreateInterface, ObjectDoOperationInterface, Objec
     /**
      * Performs addition of two matrices
      *
-     * @param Matrix $value
-     *
-     * @return $this Sum of two matrices
+     * @return self Sum of two matrices
      * @todo: Implement SSE/AVX support for addition
      */
     public function sum(self $value): self
     {
+        if (($this->columns !== $value->columns) || ($this->rows !== $value->rows)) {
+            throw new InvalidArgumentException('Inconsistent matrix supplied');
+        }
         $result = [];
         for ($i = 0; $i < $this->rows; ++$i) {
             for ($k = 0; $k < $this->columns; ++$k) {
@@ -182,14 +188,16 @@ class Matrix implements ObjectCreateInterface, ObjectDoOperationInterface, Objec
     /**
      * Performs subtraction of two matrices
      *
-     * @param Matrix $value
-     *
      * @todo: Implement SSE/AVX support for addition
      *
-     * @return $this Subtraction of two matrices
+     * @return self Subtraction of two matrices
      */
     public function subtract(self $value): self
     {
+        if (($this->columns !== $value->columns) || ($this->rows !== $value->rows)) {
+            throw new InvalidArgumentException('Inconsistent matrix supplied');
+        }
+
         $result = [];
         for ($i = 0; $i < $this->rows; ++$i) {
             for ($k = 0; $k < $this->columns; ++$k) {

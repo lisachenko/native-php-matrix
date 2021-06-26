@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ Native PHP Matrix
+  ~
+  ~ @copyright Copyright 2021, Lisachenko Alexander <lisachenko.it@gmail.com>
+  ~
+  ~ This source file is subject to the license that is bundled
+  ~ with this source code in the file LICENSE.
+  ~
+  -->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="./vendor/phpunit/phpunit/phpunit.xsd"
+         colors="true"
+         bootstrap="./vendor/autoload.php">
+    <coverage>
+        <include>
+            <directory>./src/</directory>
+        </include>
+        <report>
+            <clover outputFile="./build/logs/clover.xml"/>
+            <crap4j outputFile="./build/logs/crap4j.xml"/>
+            <xml outputDirectory="./build/coverage/xml"/>
+        </report>
+    </coverage>
+    <testsuites>
+        <testsuite name="Native PHP Matrix Test Suite">
+            <directory suffix=".phpt">./tests/</directory>
+        </testsuite>
+    </testsuites>
+    <groups>
+        <exclude>
+            <group>performance</group>
+        </exclude>
+    </groups>
+    <logging>
+        <junit outputFile="./build/logs/junit.xml"/>
+    </logging>
+</phpunit>

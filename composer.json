@@ -10,8 +10,11 @@
         }
     ],
     "require": {
-        "lisachenko/z-engine": "^0.8 || ^0.9",
+        "lisachenko/z-engine": "^0.8.1 || ^0.9.1",
         "php": "^7.4|^8.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5.5"
     },
     "autoload": {
         "psr-4" : {

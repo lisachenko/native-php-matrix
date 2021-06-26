@@ -7,9 +7,9 @@ operators of comparison, addition, multiplication, casting and much more!
 
 This library is first ever userland PHP extension, that implements operator overloading for the `Matrix` class.
 
-[![GitHub release](https://img.shields.io/github/release/lisachenko/native-types.svg)](https://github.com/lisachenko/native-types/releases/latest)
+[![GitHub release](https://img.shields.io/github/release/lisachenko/native-php-matrix.svg)](https://github.com/lisachenko/native-php-matrix/releases/latest)
 [![Minimum PHP Version](http://img.shields.io/badge/php-%3E%3D%207.4-8892BF.svg)](https://php.net/)
-[![License](https://img.shields.io/packagist/l/lisachenko/native-types.svg)](https://packagist.org/packages/lisachenko/native-types)
+[![License](https://img.shields.io/packagist/l/lisachenko/native-php-matrix.svg)](https://packagist.org/packages/lisachenko/native-php-matrix)
 
 
 Pre-requisites and initialization
@@ -20,7 +20,7 @@ As this library depends on `FFI`, it requires PHP>=7.4 and `FFI` extension to be
 
 To install this library, simply add it via `composer`:
 ```bash
-composer require lisachenko/native-types
+composer require lisachenko/native-php-matrix
 ```
 
 Now you can test it with following example:
@@ -39,9 +39,9 @@ $value  = $first * 2 + $second; // Matrix([[22, 44, 66]])
 Supported features:
  - [x] Matrices addition (`$matrixA + $matrixB`)
  - [x] Matrices subtraction (`$matrixA - $matrixB`)
+ - [x] Matrix multiplication by number (`$matrixA * 2`)
  - [x] Matrices multiplication (`$matrixA * $matrixB`)
- - [x] Matrices division (`$matrixA / $matrixB`)
- - [x] Matrices division (`$matrixA / $matrixB`)
+ - [x] Dividing a matrix by a number (`$matrixA / 2`)
  - [x] Matrices equality check (`$matrixA == $matrixB`)
  
 For the future versions, I would like to implement native SSE/AVX assembly methods to improve the performance of calculation.
