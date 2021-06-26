@@ -9,7 +9,7 @@
  */
 declare(strict_types=1);
 
-use Native\Type\Matrix;
+use Lisachenko\NativePhpMatrix\Matrix;
 use ZEngine\Core;
 use ZEngine\Reflection\ReflectionClass as ReflectionClassEx;
 

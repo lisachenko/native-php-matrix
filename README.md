@@ -24,11 +24,12 @@ composer require lisachenko/native-types
 ```
 
 Now you can test it with following example:
+
 ```php
 <?php
 declare(strict_types=1);
 
-use Native\Type\Matrix;
+use Lisachenko\NativePhpMatrix\Matrix;
 
 $first  = new Matrix([[10, 20, 30]]);
 $second = new Matrix([[2, 4, 6]]);
