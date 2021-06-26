@@ -9,7 +9,7 @@
  */
 declare(strict_types = 1);
 
-namespace Native\Type;
+namespace Lisachenko\NativePhpMatrix;
 
 use InvalidArgumentException;
 use ZEngine\ClassExtension\Hook\CompareValuesHook;
@@ -19,7 +19,9 @@ use ZEngine\ClassExtension\ObjectCreateInterface;
 use ZEngine\ClassExtension\ObjectCreateTrait;
 use ZEngine\ClassExtension\ObjectDoOperationInterface;
 use ZEngine\System\OpCode;
-use function count, is_numeric;
+
+use function count;
+use function is_numeric;
 
 /**
  * Simple class Matrix powered by custom operator handlers
