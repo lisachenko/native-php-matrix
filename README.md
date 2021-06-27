@@ -9,7 +9,7 @@ This library is first ever userland PHP extension, that implements operator over
 
 [![GitHub release](https://img.shields.io/github/release/lisachenko/native-php-matrix.svg)](https://github.com/lisachenko/native-php-matrix/releases/latest)
 [![Minimum PHP Version](http://img.shields.io/badge/php-%3E%3D%207.4-8892BF.svg)](https://php.net/)
-[![License](https://img.shields.io/packagist/l/lisachenko/native-php-matrix.svg)](https://packagist.org/packages/lisachenko/native-php-matrix)
+[![License](https://img.shields.io/github/license/lisachenko/native-php-matrix.svg)](https://packagist.org/packages/lisachenko/native-php-matrix)
 
 
 Pre-requisites and initialization
