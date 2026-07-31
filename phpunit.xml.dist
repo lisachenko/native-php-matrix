@@ -9,30 +9,21 @@
   ~
   -->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:noNamespaceSchemaLocation="./vendor/phpunit/phpunit/phpunit.xsd"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/12.5/phpunit.xsd"
          colors="true"
-         bootstrap="./vendor/autoload.php">
-    <coverage>
-        <include>
-            <directory>./src/</directory>
-        </include>
-        <report>
-            <clover outputFile="./build/logs/clover.xml"/>
-            <crap4j outputFile="./build/logs/crap4j.xml"/>
-            <xml outputDirectory="./build/coverage/xml"/>
-        </report>
-    </coverage>
+         bootstrap="./vendor/autoload.php"
+         failOnWarning="true"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         displayDetailsOnTestsThatTriggerNotices="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true">
     <testsuites>
         <testsuite name="Native PHP Matrix Test Suite">
             <directory suffix=".phpt">./tests/</directory>
         </testsuite>
     </testsuites>
-    <groups>
-        <exclude>
-            <group>performance</group>
-        </exclude>
-    </groups>
-    <logging>
-        <junit outputFile="./build/logs/junit.xml"/>
-    </logging>
+    <source>
+        <include>
+            <directory>./src/</directory>
+        </include>
+    </source>
 </phpunit>

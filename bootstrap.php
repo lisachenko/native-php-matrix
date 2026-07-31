@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Native matrix library
  *
@@ -13,8 +14,10 @@ use Lisachenko\NativePhpMatrix\Matrix;
 use ZEngine\Core;
 use ZEngine\Reflection\ReflectionClass as ReflectionClassEx;
 
-// We can not be sure that ZEngine library will be initialized first, so check if it present
-if (!class_exists(Core::class, false)) {
+// We can not be sure that the Z-Engine library was already initialized by another package, so probe the engine state
+// instead of the class existence: Core::$executor is a typed static property that is assigned only by Core::init(),
+// therefore an uninitialized property means that nobody has booted the engine yet.
+if (!isset(Core::$executor)) {
     Core::init();
 }
 
