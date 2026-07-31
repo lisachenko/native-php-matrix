@@ -1,5 +1,9 @@
 --TEST--
 Matrices with incompatible dimensions can not be subtracted
+--INI--
+ffi.enable=1
+opcache.jit=off
+error_reporting=E_ALL & ~E_DEPRECATED
 --FILE--
 <?php
 declare(strict_types=1);
@@ -10,7 +14,7 @@ include __DIR__ . '/../../vendor/autoload.php';
 
 $matrixA = new Matrix([[4, 5, 6, 7]]);
 $matrixB = new Matrix([[1, 2, 3]]);
-$result  = $matrixA + $matrixB;
+$result  = $matrixA - $matrixB;
 var_dump($result);
 ?>
 --EXPECTREGEX--
