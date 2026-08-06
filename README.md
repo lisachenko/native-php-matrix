@@ -66,7 +66,7 @@ The maths is plain PHP. The magic is only in getting the engine to call it.
 composer require lisachenko/native-php-matrix:dev-master
 ```
 
-Z-Engine ships stable PHP 8.4 releases (`8.4.0` and up), and this package requires it as `^8.4` — no dev dependency there anymore. Until the next native-php-matrix release is tagged, the package itself is still consumed from `dev-master`; Composer only resolves development stability at the **root** level, so your `composer.json` needs:
+Z-Engine ships stable PHP 8.4 releases (`8.4.0` and up), and this package requires it as `~8.4.0` (z-engine minors track PHP minors and are not interchangeable) — no dev dependency there anymore. Until the next native-php-matrix release is tagged, the package itself is still consumed from `dev-master`; Composer only resolves development stability at the **root** level, so your `composer.json` needs:
 
 ```json
 {
