@@ -63,10 +63,10 @@ The maths is plain PHP. The magic is only in getting the engine to call it.
 ## Installation
 
 ```bash
-composer require lisachenko/z-engine:dev-master lisachenko/native-php-matrix:dev-master
+composer require lisachenko/native-php-matrix:dev-master
 ```
 
-Z-Engine does not yet have a stable tag with PHP 8.4 support, so both packages are consumed from `dev-master`. Composer only resolves development stability at the **root** level, which is why the requirement has to be written into your own project rather than inherited — your `composer.json` needs:
+Z-Engine ships stable PHP 8.4 releases (`8.4.0` and up), and this package requires it as `~8.4.0` (z-engine minors track PHP minors and are not interchangeable) — no dev dependency there anymore. Until the next native-php-matrix release is tagged, the package itself is still consumed from `dev-master`; Composer only resolves development stability at the **root** level, so your `composer.json` needs:
 
 ```json
 {
@@ -75,7 +75,7 @@ Z-Engine does not yet have a stable tag with PHP 8.4 support, so both packages a
 }
 ```
 
-Once a stable 8.4-capable Z-Engine release exists, both constraints collapse back to ordinary version ranges.
+Once a native-php-matrix release covering the current code is tagged, this collapses to a plain `composer require lisachenko/native-php-matrix`.
 
 No initialization call is needed: `bootstrap.php` ships in the package's `files` autoload and sets everything up behind `require vendor/autoload.php`.
 

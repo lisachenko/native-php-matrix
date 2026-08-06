@@ -13,7 +13,7 @@
     "require": {
         "php": "~8.4.0",
         "ext-ffi": "*",
-        "lisachenko/z-engine": "dev-master"
+        "lisachenko/z-engine": "~8.4.0"
     },
     "require-dev": {
         "friendsofphp/php-cs-fixer": "^3.75",
@@ -26,8 +26,6 @@
         },
         "files": ["bootstrap.php"]
     },
-    "minimum-stability": "dev",
-    "prefer-stable": true,
     "scripts": {
         "test": "phpunit",
         "phpstan": "phpstan analyse",
