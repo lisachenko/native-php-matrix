@@ -1,5 +1,5 @@
 --TEST--
-Numeric casts of a Matrix fall back to the default engine value
+Numeric casts of a Matrix fall back to the default engine value (the engine warning is intentionally absent)
 --INI--
 ffi.enable=1
 opcache.jit=off
