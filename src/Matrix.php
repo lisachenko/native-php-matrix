@@ -37,17 +37,17 @@ use function sprintf;
 use function str_starts_with;
 
 use ZEngine\ClassExtension\Hook\CastObjectHook;
+use ZEngine\ClassExtension\Hook\CastType;
 use ZEngine\ClassExtension\Hook\CompareValuesHook;
 use ZEngine\ClassExtension\Hook\DoOperationHook;
 use ZEngine\ClassExtension\Hook\GetPropertiesForHook;
+use ZEngine\ClassExtension\Hook\PropertyPurpose;
 use ZEngine\ClassExtension\ObjectCastInterface;
 use ZEngine\ClassExtension\ObjectCompareValuesInterface;
 use ZEngine\ClassExtension\ObjectCreateInterface;
 use ZEngine\ClassExtension\ObjectCreateTrait;
 use ZEngine\ClassExtension\ObjectDoOperationInterface;
 use ZEngine\ClassExtension\ObjectGetPropertiesForInterface;
-use ZEngine\Core;
-use ZEngine\Reflection\ReflectionValue;
 use ZEngine\System\OpCode;
 
 /**
@@ -67,35 +67,6 @@ final class Matrix implements
     ObjectGetPropertiesForInterface
 {
     use ObjectCreateTrait;
-
-    /**
-     * Cast type the engine passes for boolean casts (`_IS_BOOL` in Zend/zend_types.h)
-     *
-     * PHP 8.1 inserted IS_NEVER = 17 into the engine type table, shifting _IS_BOOL to 18 and
-     * _IS_NUMBER to 19. The z-engine 8.4 line (8.4.0) still declares the pre-8.1 values
-     * (ReflectionValue::_IS_BOOL = 17, ReflectionValue::_IS_NUMBER = 18), so dispatching on those
-     * constants would misroute every boolean cast on PHP 8.4.
-     */
-    private const int ENGINE_IS_BOOL = 18;
-
-    /**
-     * Cast type the engine passes for numeric coercion (`_IS_NUMBER` in Zend/zend_types.h)
-     *
-     * @see self::ENGINE_IS_BOOL for why ReflectionValue::_IS_NUMBER cannot be used here
-     */
-    private const int ENGINE_IS_NUMBER = 19;
-
-    /**
-     * Purpose the engine passes to the get_properties_for handler on `(array)` casts
-     * (ZEND_PROP_PURPOSE_ARRAY_CAST in Zend/zend_object_handlers.h)
-     */
-    private const int PROP_PURPOSE_ARRAY_CAST = 1;
-
-    /**
-     * Purpose the engine passes to the get_properties_for handler for get_object_vars() calls
-     * (ZEND_PROP_PURPOSE_GET_OBJECT_VARS in Zend/zend_object_handlers.h)
-     */
-    private const int PROP_PURPOSE_GET_OBJECT_VARS = 5;
 
     /**
      * Matrix cells, stored as a list of rows
@@ -438,10 +409,9 @@ final class Matrix implements
      * Unlike the operation and comparison hooks this handler never throws: it runs inside an FFI
      * callback, and PHP 8.4 escalates any exception crossing that boundary into an engine-level
      * fatal error. Cast types that are not implemented here defer to the default engine behaviour
-     * via {@see CastObjectHook::proceed()} instead. One deliberate deviation: the engine caller
-     * normally emits "Object of class ... could not be converted to int/float" when the default
-     * handler fails, but the z-engine trampoline reports success unconditionally, so numeric
-     * casts yield the substitute value silently — the warning cannot be restored from here.
+     * via {@see CastObjectHook::proceed()} — with z-engine >= 8.4.1 that fall-through behaves
+     * exactly like an uninstalled handler, so failed numeric casts propagate to the engine
+     * caller, which emits its own warning and substitutes the value 1.
      *
      * @param CastObjectHook $hook Instance of current hook
      *
@@ -449,38 +419,27 @@ final class Matrix implements
      */
     public static function __cast(CastObjectHook $hook): mixed
     {
-        $object   = $hook->getObject();
-        $castType = $hook->getCastType();
+        $object = $hook->getObject();
 
         if ($object instanceof self) {
-            switch ($castType) {
-                case ReflectionValue::IS_ARRAY:
+            switch ($hook->getCastTypeEnum()) {
+                case CastType::Array:
                     // PHP 8.4 routes `(array)` casts through the get_properties_for handler (see
                     // __getFields), the branch stays for engine paths that pass IS_ARRAY directly
                     return $object->toArray();
-                case ReflectionValue::IS_STRING:
+                case CastType::String:
                     return $object->toString();
-                case self::ENGINE_IS_BOOL:
+                case CastType::Bool:
                     // A valid matrix holds at least one cell by construction, so it is never "empty"
                     return true;
+                default:
+                    break;
             }
         }
 
-        // getResult() may only be consulted after a successful proceed(): on failure the retval
-        // slot is uninitialized scratch memory and reading it corrupts the calling VM frame
-        $status = $hook->proceed();
-        if ($status === Core::SUCCESS) {
-            return $hook->getResult();
-        }
+        $hook->proceed();
 
-        // The default handler produced no value: for numeric casts the engine caller would emit
-        // a warning and substitute 1, but the z-engine trampoline always reports success to the
-        // engine, so that substitute value has to be supplied here
-        return match ($castType) {
-            ReflectionValue::IS_LONG, self::ENGINE_IS_NUMBER => 1,
-            ReflectionValue::IS_DOUBLE                       => 1.0,
-            default                                          => null,
-        };
+        return $hook->getResult();
     }
 
     /**
@@ -504,13 +463,13 @@ final class Matrix implements
     public static function __getFields(GetPropertiesForHook $hook): array
     {
         $object  = $hook->getObject();
-        $purpose = $hook->getPurpose();
+        $purpose = $hook->getPurposeEnum();
 
-        if ($object instanceof self && $purpose === self::PROP_PURPOSE_ARRAY_CAST) {
+        if ($object instanceof self && $purpose === PropertyPurpose::ArrayCast) {
             return $object->toArray();
         }
 
-        if ($purpose === self::PROP_PURPOSE_GET_OBJECT_VARS) {
+        if ($purpose === PropertyPurpose::GetObjectVars) {
             // The engine hands the returned table to get_object_vars() callers without applying
             // any visibility filtering once a custom handler is installed, so only the publicly
             // visible entries may be exposed here: every property of Matrix is private, exactly
