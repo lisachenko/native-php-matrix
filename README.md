@@ -8,7 +8,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/lisachenko/native-php-matrix/ci.yml?branch=master&label=CI)](https://github.com/lisachenko/native-php-matrix/actions/workflows/ci.yml)
 [![GitHub release](https://img.shields.io/github/release/lisachenko/native-php-matrix.svg)](https://github.com/lisachenko/native-php-matrix/releases/latest)
-[![PHP Version](https://img.shields.io/badge/php-8.4-8892BF.svg)](https://php.net/)
+[![PHP Version](https://img.shields.io/badge/php-8.4%20%7C%208.5-8892BF.svg)](https://php.net/)
 [![License](https://img.shields.io/packagist/l/lisachenko/native-php-matrix.svg)](https://packagist.org/packages/lisachenko/native-php-matrix)
 [![PHPStan](https://img.shields.io/badge/PHPStan-level%20max-brightgreen.svg)](https://phpstan.org/)
 
@@ -39,7 +39,7 @@ The trick is [lisachenko/z-engine](https://github.com/lisachenko/z-engine), whic
 
 Every operation returns a **new** `Matrix`; the class is `final` and its state is `readonly`, so nothing is ever mutated in place. The constructor validates that you passed a rectangular list of rows holding only `int`/`float` cells and raises a catchable `InvalidArgumentException` when it does not.
 
-Operator-level failures are a different story, and it is worth being blunt about it: a dimension mismatch (`InvalidArgumentException`) or an unimplemented operand combination such as `$a - 2` (`LogicException`) is raised *inside an FFI callback*, and PHP 8.4 does not allow an exception to cross that boundary. The engine prints the exception and then halts with `Fatal error: Throwing from FFI callbacks is not allowed`. You cannot `try`/`catch` it — check your dimensions before you multiply.
+Operator-level failures are a different story, and it is worth being blunt about it: a dimension mismatch (`InvalidArgumentException`) or an unimplemented operand combination such as `$a - 2` (`LogicException`) is raised *inside an FFI callback*, and PHP does not allow an exception to cross that boundary. The engine prints the exception and then halts with `Fatal error: Throwing from FFI callbacks is not allowed`. You cannot `try`/`catch` it — check your dimensions before you multiply.
 
 Generics are honest about arithmetic: `Matrix<int>` divided by `2` is a `Matrix<int|float>`, because PHP's `/` widens. Nothing pretends to preserve `T` where the maths does not.
 
@@ -55,10 +55,10 @@ The maths is plain PHP. The magic is only in getting the engine to call it.
 
 ## Requirements
 
-- **PHP `~8.4.0`** — an exact minor, not a floor. Z-Engine reads engine structures by byte offset and those offsets change on every PHP minor release; `Core::init()` refuses to boot on a mismatch rather than corrupting memory.
+- **PHP `^8.4`** — 8.4 and 8.5 are supported in parallel. Z-Engine reads engine structures by byte offset and those offsets change on every PHP minor release, so each minor rides its own Z-Engine line; `Core::init()` refuses to boot on a mismatch rather than corrupting memory.
 - **`ext-ffi` enabled**, with `ffi.enable=1` for CLI usage.
 - **x64, non-thread-safe (NTS)** build — the same platform limitations as [Z-Engine](https://github.com/lisachenko/z-engine#requirements--support-matrix).
-- The **matching Z-Engine minor branch**. This package tracks the PHP 8.4 line; mixing a Z-Engine built for another minor is not a configuration choice, it is undefined behaviour.
+- The **matching Z-Engine minor branch**. Composer resolves it for you from the `8.4.x-dev || 8.5.x-dev` constraint; mixing a Z-Engine built for another minor is not a configuration choice, it is undefined behaviour.
 
 ## Installation
 
@@ -66,7 +66,7 @@ The maths is plain PHP. The magic is only in getting the engine to call it.
 composer require lisachenko/native-php-matrix:dev-master
 ```
 
-Z-Engine ships stable PHP 8.4 releases (`8.4.0` and up), and this package requires it as `~8.4.0` (z-engine minors track PHP minors and are not interchangeable) — no dev dependency there anymore. Until the next native-php-matrix release is tagged, the package itself is still consumed from `dev-master`; Composer only resolves development stability at the **root** level, so your `composer.json` needs:
+This package requires Z-Engine as `8.4.x-dev || 8.5.x-dev` — z-engine minors track PHP minors and are not interchangeable, so Composer resolves the line matching your PHP automatically (the `8.4` branch on PHP 8.4, `master` on PHP 8.5). Those are development branches, and the package itself is consumed from `dev-master`; Composer only resolves development stability at the **root** level, so your `composer.json` needs:
 
 ```json
 {

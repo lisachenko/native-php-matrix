@@ -7,20 +7,22 @@ to install `create_object`, `do_operation` and `compare` handlers directly onto 
 `Matrix` class entry through PHP FFI. The matrix arithmetic underneath is ordinary,
 readable PHP; the only unusual part is how the engine is convinced to call it.
 
-## The one rule that is non-negotiable: the PHP version is pinned
+## The one rule that is non-negotiable: PHP minor and z-engine line move together
 
-`composer.json` requires **`php: ~8.4.0`** — an exact minor, not a floor. z-engine
-reads engine structures (`zend_class_entry`, `zval`, `zend_object_handlers`) by byte
-offset, and those offsets change on every PHP minor release. Running against the
-wrong minor does not throw a nice exception; it reads and writes the wrong memory.
+`composer.json` requires **`php: ^8.4`**, and PHP 8.4 and 8.5 are supported **in
+parallel** — each minor riding its own z-engine line. z-engine reads engine
+structures (`zend_class_entry`, `zval`, `zend_object_handlers`) by byte offset, and
+those offsets change on every PHP minor release. Running against the wrong minor
+does not throw a nice exception; it reads and writes the wrong memory.
 
-`ZEngine\Core::init()` (called from `bootstrap.php`) enforces the match and aborts
-with a clear message. **Never "fix" an initialization failure by loosening the PHP
-constraint, skipping `Core::init()`, or defeating the guard.** If the environment's
-PHP does not satisfy `~8.4.0`, the environment is wrong — say so and stop.
-
-The same applies in reverse: z-engine's own FFI definitions live on per-minor
-branches, so this package must consume the z-engine line built for PHP 8.4.
+That is why z-engine is required as **`8.4.x-dev || 8.5.x-dev`**: Composer resolves
+the line matching the running PHP (the `8.4` branch on PHP 8.4, `master` — aliased
+`8.5.x-dev` — on PHP 8.5). `ZEngine\Core::init()` (called from `bootstrap.php`)
+enforces the exact match and aborts with a clear message. **Never "fix" an
+initialization failure by loosening the constraints past the minors z-engine has
+definitions for, skipping `Core::init()`, or defeating the guard.** If the
+environment's PHP does not satisfy `^8.4` (8.4 or 8.5), the environment is wrong —
+say so and stop.
 
 ## Running tests
 
@@ -139,7 +141,7 @@ tests/Functional/*.phpt   the functional suite, one behaviour per file
 phpunit.xml.dist          PHPUnit 12 config (suite points at tests/, suffix .phpt)
 phpstan.dist.neon         static analysis config, level max
 .php-cs-fixer.dist.php    coding standards config (PER-CS2.0)
-.github/workflows/ci.yml  jobs: tests, static-analysis, coding-standards — PHP 8.4
+.github/workflows/ci.yml  jobs: tests, static-analysis, coding-standards — PHP 8.4 and 8.5
 ```
 
 `src/Matrix.php` is the whole library. There is no framework here to hide behind: a
@@ -152,7 +154,7 @@ at once.
   are **static**. They do throw — `InvalidArgumentException` for a dimension
   mismatch, `LogicException` for an operand combination the class does not
   implement — but be precise about what that means for a caller: these hooks run
-  inside an **FFI callback**, and PHP 8.4 does not let an exception cross that
+  inside an **FFI callback**, and PHP does not let an exception cross that
   boundary. The engine reports the exception and then aborts with
   `Fatal error: Throwing from FFI callbacks is not allowed`. The script dies with
   exit code 255; a userland `try`/`catch` around `$a + $b` **will not catch it**.
@@ -177,7 +179,7 @@ at once.
 feat(matrix): support element-wise exponentiation by scalar
 fix(bootstrap): install create_object handler before do_operation
 test(tests): cover division by zero
-ci: run the suite on PHP 8.4 with ffi.enable=1
+ci: run the suite on PHP 8.4 and 8.5 with ffi.enable=1
 docs: rewrite the README in the z-engine style
 ```
 
@@ -188,11 +190,13 @@ proposing a change rather than hand-formatting.
 
 ## Dependency policy
 
-- `lisachenko/z-engine` is required as **`dev-master`**. There is no stable tag with
-  PHP 8.4 support yet, so the root `composer.json` also carries
+- `lisachenko/z-engine` is required as **`8.4.x-dev || 8.5.x-dev`** — one dev line
+  per supported PHP minor, resolved by Composer to match the running PHP. Those are
+  development branches, so the root `composer.json` also carries
   `"minimum-stability": "dev"` with `"prefer-stable": true` — Composer resolves
   development stability only at the root level, so consumers need the same pair.
-- PHP stays pinned at `~8.4.0`, in lockstep with the z-engine line this package
-  tracks. Bumping one without the other is never correct.
-- When z-engine ships a stable PHP 8.4 release, both the constraint and the
-  root stability flags should be tightened in a single change.
+- PHP stays at `^8.4`, in lockstep with the set of z-engine lines this package
+  tracks: a new PHP minor is added here only together with the z-engine line built
+  for it, and never one without the other.
+- When z-engine ships stable releases for the supported minors, the constraint and
+  the root stability flags should be tightened in a single change.
