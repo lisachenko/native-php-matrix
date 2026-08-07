@@ -407,11 +407,11 @@ final class Matrix implements
      * Performs casting of this object to another type, requested by the engine
      *
      * Unlike the operation and comparison hooks this handler never throws: it runs inside an FFI
-     * callback, and PHP 8.4 escalates any exception crossing that boundary into an engine-level
+     * callback, and PHP escalates any exception crossing that boundary into an engine-level
      * fatal error. Cast types that are not implemented here defer to the default engine behaviour
-     * via {@see CastObjectHook::proceed()} — with z-engine >= 8.4.1 that fall-through behaves
-     * exactly like an uninstalled handler, so failed numeric casts propagate to the engine
-     * caller, which emits its own warning and substitutes the value 1.
+     * via {@see CastObjectHook::proceed()} — on the z-engine dev lines this package tracks that
+     * fall-through behaves exactly like an uninstalled handler, so failed numeric casts propagate
+     * to the engine caller, which emits its own warning and substitutes the value 1.
      *
      * @param CastObjectHook $hook Instance of current hook
      *
