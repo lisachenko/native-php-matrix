@@ -134,6 +134,25 @@ var_dump($a != $c); // bool(true)
 
 Equality is element-wise and strict. Ordering operators (`<`, `>`) are deliberately not meaningful for matrices — the `compare` hook reports "unordered" rather than inventing a total order.
 
+### Casting
+
+Casts are dispatched by the engine too — the `cast_object` and `get_properties_for` handlers:
+
+```php
+$m = new Matrix([[1, 2], [3, 4]]);
+
+var_dump((array) $m);  // [[1, 2], [3, 4]] — the rows, not the object's internals
+
+echo (string) $m;      // [1, 2]
+                       // [3, 4]
+
+var_dump((bool) $m);   // bool(true) — a valid matrix is never empty by construction
+```
+
+Numeric casts keep the engine's default behaviour (`(int) $m` gives `1`), and everything that is
+not a cast — `var_dump()`, `serialize()`, `var_export()`, `json_encode()`, `get_object_vars()` —
+still sees the object exactly as before.
+
 ### Beyond operators
 
 The class is a normal PHP object too:
@@ -154,7 +173,6 @@ Tracked as [GitHub issues](https://github.com/lisachenko/native-php-matrix/issue
 - **Array-style row access** — `$matrix[0]` and `$matrix[0][1]` via the `read_dimension` handler
 - **`count($matrix)`** — row count through `Countable`, installed at the engine level
 - **`foreach` iteration** — row-by-row traversal via the `get_iterator` handler
-- **Scalar casts** — `(string)` and `(float)` behaviour through `cast_object`
 - **Friendly `var_dump()`** — a `get_debug_info` handler that prints the matrix instead of its internals
 - **FFI BLAS backend** — hand multiplication off to a real BLAS library for performance, keeping the pure-PHP path as the fallback
 

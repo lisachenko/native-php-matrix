@@ -13,9 +13,15 @@ declare(strict_types=1);
 namespace Lisachenko\NativePhpMatrix;
 
 use function array_column;
+use function array_filter;
+
+use const ARRAY_FILTER_USE_KEY;
+
 use function array_is_list;
 use function array_keys;
 use function count;
+use function get_mangled_object_vars;
+use function implode;
 
 use InvalidArgumentException;
 
@@ -28,13 +34,20 @@ use function is_string;
 use LogicException;
 
 use function sprintf;
+use function str_starts_with;
 
+use ZEngine\ClassExtension\Hook\CastObjectHook;
+use ZEngine\ClassExtension\Hook\CastType;
 use ZEngine\ClassExtension\Hook\CompareValuesHook;
 use ZEngine\ClassExtension\Hook\DoOperationHook;
+use ZEngine\ClassExtension\Hook\GetPropertiesForHook;
+use ZEngine\ClassExtension\Hook\PropertyPurpose;
+use ZEngine\ClassExtension\ObjectCastInterface;
 use ZEngine\ClassExtension\ObjectCompareValuesInterface;
 use ZEngine\ClassExtension\ObjectCreateInterface;
 use ZEngine\ClassExtension\ObjectCreateTrait;
 use ZEngine\ClassExtension\ObjectDoOperationInterface;
+use ZEngine\ClassExtension\ObjectGetPropertiesForInterface;
 use ZEngine\System\OpCode;
 
 /**
@@ -46,7 +59,12 @@ use ZEngine\System\OpCode;
  *
  * @template-covariant T of int|float
  */
-final class Matrix implements ObjectCreateInterface, ObjectDoOperationInterface, ObjectCompareValuesInterface
+final class Matrix implements
+    ObjectCastInterface,
+    ObjectCompareValuesInterface,
+    ObjectCreateInterface,
+    ObjectDoOperationInterface,
+    ObjectGetPropertiesForInterface
 {
     use ObjectCreateTrait;
 
@@ -383,6 +401,101 @@ final class Matrix implements ObjectCreateInterface, ObjectDoOperationInterface,
         }
 
         return -2;
+    }
+
+    /**
+     * Performs casting of this object to another type, requested by the engine
+     *
+     * Unlike the operation and comparison hooks this handler never throws: it runs inside an FFI
+     * callback, and PHP escalates any exception crossing that boundary into an engine-level
+     * fatal error. Cast types that are not implemented here defer to the default engine behaviour
+     * via {@see CastObjectHook::proceed()} — on the z-engine dev lines this package tracks that
+     * fall-through behaves exactly like an uninstalled handler, so failed numeric casts propagate
+     * to the engine caller, which emits its own warning and substitutes the value 1.
+     *
+     * @param CastObjectHook $hook Instance of current hook
+     *
+     * @return mixed Casted value
+     */
+    public static function __cast(CastObjectHook $hook): mixed
+    {
+        $object = $hook->getObject();
+
+        if ($object instanceof self) {
+            switch ($hook->getCastTypeEnum()) {
+                case CastType::Array:
+                    // PHP 8.4 routes `(array)` casts through the get_properties_for handler (see
+                    // __getFields), the branch stays for engine paths that pass IS_ARRAY directly
+                    return $object->toArray();
+                case CastType::String:
+                    return $object->toString();
+                case CastType::Bool:
+                    // A valid matrix holds at least one cell by construction, so it is never "empty"
+                    return true;
+                default:
+                    break;
+            }
+        }
+
+        $hook->proceed();
+
+        return $hook->getResult();
+    }
+
+    /**
+     * Returns an array representation of this object for the purpose requested by the engine
+     *
+     * PHP 8.4 does not route `(array)` casts through the cast_object handler: they arrive here,
+     * at the get_properties_for handler, with the ARRAY_CAST purpose. Every other purpose
+     * (debugging, serialization, var_export, JSON encoding, get_object_vars) keeps the default
+     * property table, reproduced with get_mangled_object_vars() because the raw hashtable
+     * returned by the original engine handler cannot cross the hook boundary as a PHP array.
+     * This handler runs in non-throwing engine contexts and therefore never throws.
+     *
+     * One deliberate deviation: get_object_vars() is scope-sensitive by default (a closure bound
+     * to Matrix would see the private properties), but the calling scope is not recoverable from
+     * inside this FFI callback, so every caller receives the public view — an empty array.
+     *
+     * @param GetPropertiesForHook $hook Instance of current hook
+     *
+     * @return array<array-key, mixed> Key-value pairs for the requested purpose
+     */
+    public static function __getFields(GetPropertiesForHook $hook): array
+    {
+        $object  = $hook->getObject();
+        $purpose = $hook->getPurposeEnum();
+
+        if ($object instanceof self && $purpose === PropertyPurpose::ArrayCast) {
+            return $object->toArray();
+        }
+
+        if ($purpose === PropertyPurpose::GetObjectVars) {
+            // The engine hands the returned table to get_object_vars() callers without applying
+            // any visibility filtering once a custom handler is installed, so only the publicly
+            // visible entries may be exposed here: every property of Matrix is private, exactly
+            // like the default handlers would show to an outside caller. Class-scoped callers
+            // lose their privileged view — see the deviation note in the method docblock
+            return array_filter(
+                get_mangled_object_vars($object),
+                static fn(int|string $key): bool => !is_string($key) || !str_starts_with($key, "\0"),
+                ARRAY_FILTER_USE_KEY,
+            );
+        }
+
+        return get_mangled_object_vars($object);
+    }
+
+    /**
+     * Returns a human-readable representation of this matrix, one row per line
+     */
+    private function toString(): string
+    {
+        $rows = [];
+        foreach ($this->matrix as $row) {
+            $rows[] = '[' . implode(', ', $row) . ']';
+        }
+
+        return implode("\n", $rows);
     }
 
     /**
