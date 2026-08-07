@@ -14,6 +14,9 @@ namespace Lisachenko\NativePhpMatrix;
 
 use function array_column;
 use function array_filter;
+
+use const ARRAY_FILTER_USE_KEY;
+
 use function array_is_list;
 use function array_keys;
 use function count;
@@ -69,7 +72,7 @@ final class Matrix implements
      * Cast type the engine passes for boolean casts (`_IS_BOOL` in Zend/zend_types.h)
      *
      * PHP 8.1 inserted IS_NEVER = 17 into the engine type table, shifting _IS_BOOL to 18 and
-     * _IS_NUMBER to 19. z-engine dev-master still declares the pre-8.1 values
+     * _IS_NUMBER to 19. The z-engine 8.4 line (8.4.0) still declares the pre-8.1 values
      * (ReflectionValue::_IS_BOOL = 17, ReflectionValue::_IS_NUMBER = 18), so dispatching on those
      * constants would misroute every boolean cast on PHP 8.4.
      */
@@ -435,7 +438,10 @@ final class Matrix implements
      * Unlike the operation and comparison hooks this handler never throws: it runs inside an FFI
      * callback, and PHP 8.4 escalates any exception crossing that boundary into an engine-level
      * fatal error. Cast types that are not implemented here defer to the default engine behaviour
-     * via {@see CastObjectHook::proceed()} instead.
+     * via {@see CastObjectHook::proceed()} instead. One deliberate deviation: the engine caller
+     * normally emits "Object of class ... could not be converted to int/float" when the default
+     * handler fails, but the z-engine trampoline reports success unconditionally, so numeric
+     * casts yield the substitute value silently — the warning cannot be restored from here.
      *
      * @param CastObjectHook $hook Instance of current hook
      *
@@ -460,6 +466,8 @@ final class Matrix implements
             }
         }
 
+        // getResult() may only be consulted after a successful proceed(): on failure the retval
+        // slot is uninitialized scratch memory and reading it corrupts the calling VM frame
         $status = $hook->proceed();
         if ($status === Core::SUCCESS) {
             return $hook->getResult();
@@ -485,6 +493,10 @@ final class Matrix implements
      * returned by the original engine handler cannot cross the hook boundary as a PHP array.
      * This handler runs in non-throwing engine contexts and therefore never throws.
      *
+     * One deliberate deviation: get_object_vars() is scope-sensitive by default (a closure bound
+     * to Matrix would see the private properties), but the calling scope is not recoverable from
+     * inside this FFI callback, so every caller receives the public view — an empty array.
+     *
      * @param GetPropertiesForHook $hook Instance of current hook
      *
      * @return array<array-key, mixed> Key-value pairs for the requested purpose
@@ -502,7 +514,8 @@ final class Matrix implements
             // The engine hands the returned table to get_object_vars() callers without applying
             // any visibility filtering once a custom handler is installed, so only the publicly
             // visible entries may be exposed here: every property of Matrix is private, exactly
-            // like the default handlers would show to an outside caller
+            // like the default handlers would show to an outside caller. Class-scoped callers
+            // lose their privileged view — see the deviation note in the method docblock
             return array_filter(
                 get_mangled_object_vars($object),
                 static fn(int|string $key): bool => !is_string($key) || !str_starts_with($key, "\0"),
