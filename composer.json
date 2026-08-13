@@ -41,12 +41,14 @@
     },
     "scripts": {
         "test": "phpunit",
+        "bench": "php bench/benchmark.php",
         "phpstan": "phpstan analyse",
         "cs:check": "php-cs-fixer fix --dry-run --diff",
         "cs:fix": "php-cs-fixer fix"
     },
     "scripts-descriptions": {
         "test": "Run the test suite",
+        "bench": "Compare the matrix backends on the operations of a neural network layer",
         "phpstan": "Run static analysis at the maximum level",
         "cs:check": "Check coding standards without fixing",
         "cs:fix": "Fix coding standards"

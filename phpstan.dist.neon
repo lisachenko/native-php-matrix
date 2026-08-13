@@ -3,6 +3,7 @@ parameters:
     phpVersion: 80400
     paths:
         - src
+        - bench
         - bootstrap.php
     treatPhpDocTypesAsCertain: false
     ignoreErrors:
@@ -29,3 +30,9 @@ parameters:
         -
             identifier: property.notFound
             path: src/Backend/ClblastBackend.php
+        # The whole point of this package is that the engine dispatches "*" and "+" on a Matrix through handlers
+        # installed at runtime. No static analyser can know that, so the benchmark — the only place that uses the
+        # operators rather than the methods behind them — reports them as invalid operations
+        -
+            identifier: binaryOp.invalid
+            path: bench/benchmark.php
