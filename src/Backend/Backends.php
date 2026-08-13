@@ -64,6 +64,11 @@ final class Backends
     public const string BLAS = 'blas';
 
     /**
+     * Name of the CLBlast GPU driver
+     */
+    public const string CLBLAST = 'clblast';
+
+    /**
      * Registered driver factories, keyed by driver name
      *
      * Null until the built-in drivers are registered, which happens on first use.
@@ -316,8 +321,9 @@ final class Backends
     {
         if (self::$factories === null) {
             self::$factories = [
-                self::PHP  => static fn(): BackendInterface => new PhpBackend(),
-                self::BLAS => static fn(): BackendInterface => new BlasBackend(),
+                self::PHP     => static fn(): BackendInterface => new PhpBackend(),
+                self::BLAS    => static fn(): BackendInterface => new BlasBackend(),
+                self::CLBLAST => static fn(): BackendInterface => new ClblastBackend(),
             ];
         }
 

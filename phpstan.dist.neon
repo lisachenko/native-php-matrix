@@ -21,3 +21,11 @@ parameters:
         -
             identifier: method.notFound
             path: src/Backend/BlasBackend.php
+        # Same for the OpenCL and CLBlast entry points of the GPU driver, plus the pseudo-property FFI exposes on
+        # scalar handles: both exist only once the C declarations have been parsed at runtime
+        -
+            identifier: method.notFound
+            path: src/Backend/ClblastBackend.php
+        -
+            identifier: property.notFound
+            path: src/Backend/ClblastBackend.php

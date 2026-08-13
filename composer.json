@@ -28,7 +28,8 @@
         "phpunit/phpunit": "^12.5"
     },
     "suggest": {
-        "lib-openblas": "Install the OpenBLAS shared library (Debian/Ubuntu: libopenblas0, Homebrew: openblas) to enable the CPU-accelerated \"blas\" backend"
+        "lib-openblas": "Install the OpenBLAS shared library (Debian/Ubuntu: libopenblas0, Homebrew: openblas) to enable the CPU-accelerated \"blas\" backend",
+        "lib-clblast": "Install CLBlast and an OpenCL runtime (Debian/Ubuntu: libclblast1, ocl-icd-libopencl1 plus a vendor ICD or pocl-opencl-icd) to enable the GPU-accelerated \"clblast\" backend"
     },
     "autoload": {
         "psr-4": {
