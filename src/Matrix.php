@@ -154,6 +154,28 @@ final class Matrix implements
     }
 
     /**
+     * Returns a copy of this matrix with every cell converted to a float
+     *
+     * The accelerated backends compute in double precision only, so this conversion makes explicit — in ordinary,
+     * catchable userland code — what those drivers do to an integer matrix internally.
+     *
+     * @return self<float> Matrix with the same dimensions, holding floats
+     */
+    public function asFloat(): self
+    {
+        $result = [];
+        foreach ($this->matrix as $row) {
+            $resultRow = [];
+            foreach ($row as $cellValue) {
+                $resultRow[] = (float) $cellValue;
+            }
+            $result[] = $resultRow;
+        }
+
+        return new self($result);
+    }
+
+    /**
      * Performs multiplication of two matrices
      *
      * @param self<int|float> $multiplier Right operand
