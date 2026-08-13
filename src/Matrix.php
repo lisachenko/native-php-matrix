@@ -12,13 +12,11 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix;
 
-use function array_column;
 use function array_filter;
 
 use const ARRAY_FILTER_USE_KEY;
 
 use function array_is_list;
-use function array_keys;
 use function count;
 use function get_mangled_object_vars;
 use function implode;
@@ -31,6 +29,7 @@ use function is_int;
 use function is_numeric;
 use function is_string;
 
+use Lisachenko\NativePhpMatrix\Backend\Backends;
 use LogicException;
 
 use function sprintf;
@@ -77,13 +76,26 @@ final class Matrix implements
 
     /**
      * Total number of rows in this matrix
+     *
+     * @var positive-int
      */
     private readonly int $rows;
 
     /**
      * Total number of columns in this matrix
+     *
+     * @var positive-int
      */
     private readonly int $columns;
+
+    /**
+     * Whether at least one cell of this matrix is a float
+     *
+     * Collected while the cells are validated anyway, because the automatic backend routing needs the answer for
+     * every operation: accelerated drivers compute in double precision, so an all-integer operation has to stay
+     * on the pure-PHP driver to keep returning integers.
+     */
+    private readonly bool $containsFloats;
 
     /**
      * Matrix constructor
@@ -99,7 +111,8 @@ final class Matrix implements
             throw new InvalidArgumentException('Matrix should be a list of rows with sequential keys, starting from 0');
         }
 
-        $columns = null;
+        $columns        = null;
+        $containsFloats = false;
         foreach ($matrix as $rowIndex => $row) {
             if (!is_array($row) || !array_is_list($row)) {
                 throw new InvalidArgumentException(
@@ -120,12 +133,14 @@ final class Matrix implements
                         sprintf('Matrix value at [%d][%d] should be either an int or a float', $rowIndex, $columnIndex),
                     );
                 }
+                $containsFloats = $containsFloats || is_float($value);
             }
         }
 
-        $this->matrix  = $matrix;
-        $this->rows    = count($matrix);
-        $this->columns = count($matrix[0]);
+        $this->matrix         = $matrix;
+        $this->rows           = count($matrix);
+        $this->columns        = count($matrix[0]);
+        $this->containsFloats = $containsFloats;
     }
 
     public function getRows(): int
@@ -188,27 +203,15 @@ final class Matrix implements
             throw new InvalidArgumentException('Inconsistent matrix supplied');
         }
 
-        // Columns of the multiplier are extracted only once, they are reused for every row of the left operand
-        $multiplierColumns = [];
-        foreach (array_keys($multiplier->matrix[0]) as $column) {
-            $multiplierColumns[] = array_column($multiplier->matrix, $column);
-        }
+        $backend = Backends::resolveFor($this->containsFloats || $multiplier->containsFloats);
 
-        $result = [];
-        foreach ($this->matrix as $rowItems) {
-            $resultRow = [];
-            foreach ($multiplierColumns as $columnItems) {
-                $cellValue = 0;
-                foreach ($rowItems as $key => $value) {
-                    $cellValue += $value * $columnItems[$key];
-                }
-
-                $resultRow[] = $cellValue;
-            }
-            $result[] = $resultRow;
-        }
-
-        return new self($result);
+        return new self($backend->multiply(
+            $this->matrix,
+            $multiplier->matrix,
+            $this->rows,
+            $this->columns,
+            $multiplier->columns,
+        ));
     }
 
     /**
@@ -220,16 +223,9 @@ final class Matrix implements
      */
     public function divideByScalar(int|float $value): self
     {
-        $result = [];
-        foreach ($this->matrix as $row) {
-            $resultRow = [];
-            foreach ($row as $cellValue) {
-                $resultRow[] = $cellValue / $value;
-            }
-            $result[] = $resultRow;
-        }
+        $backend = Backends::resolveFor($this->containsFloats || is_float($value));
 
-        return new self($result);
+        return new self($backend->divideByScalar($this->matrix, $value, $this->rows, $this->columns));
     }
 
     /**
@@ -241,16 +237,9 @@ final class Matrix implements
      */
     public function multiplyByScalar(int|float $value): self
     {
-        $result = [];
-        foreach ($this->matrix as $row) {
-            $resultRow = [];
-            foreach ($row as $cellValue) {
-                $resultRow[] = $cellValue * $value;
-            }
-            $result[] = $resultRow;
-        }
+        $backend = Backends::resolveFor($this->containsFloats || is_float($value));
 
-        return new self($result);
+        return new self($backend->multiplyByScalar($this->matrix, $value, $this->rows, $this->columns));
     }
 
     /**
@@ -262,16 +251,9 @@ final class Matrix implements
      */
     public function powByScalar(int|float $value): self
     {
-        $result = [];
-        foreach ($this->matrix as $row) {
-            $resultRow = [];
-            foreach ($row as $cellValue) {
-                $resultRow[] = $cellValue ** $value;
-            }
-            $result[] = $resultRow;
-        }
+        $backend = Backends::resolveFor($this->containsFloats || is_float($value));
 
-        return new self($result);
+        return new self($backend->powByScalar($this->matrix, $value, $this->rows, $this->columns));
     }
 
     /**
@@ -287,17 +269,9 @@ final class Matrix implements
             throw new InvalidArgumentException('Inconsistent matrix supplied');
         }
 
-        $result = [];
-        foreach ($this->matrix as $rowIndex => $row) {
-            $anotherRow = $value->matrix[$rowIndex];
-            $resultRow  = [];
-            foreach ($row as $columnIndex => $cellValue) {
-                $resultRow[] = $cellValue + $anotherRow[$columnIndex];
-            }
-            $result[] = $resultRow;
-        }
+        $backend = Backends::resolveFor($this->containsFloats || $value->containsFloats);
 
-        return new self($result);
+        return new self($backend->sum($this->matrix, $value->matrix, $this->rows, $this->columns));
     }
 
     /**
@@ -313,17 +287,9 @@ final class Matrix implements
             throw new InvalidArgumentException('Inconsistent matrix supplied');
         }
 
-        $result = [];
-        foreach ($this->matrix as $rowIndex => $row) {
-            $anotherRow = $value->matrix[$rowIndex];
-            $resultRow  = [];
-            foreach ($row as $columnIndex => $cellValue) {
-                $resultRow[] = $cellValue - $anotherRow[$columnIndex];
-            }
-            $result[] = $resultRow;
-        }
+        $backend = Backends::resolveFor($this->containsFloats || $value->containsFloats);
 
-        return new self($result);
+        return new self($backend->subtract($this->matrix, $value->matrix, $this->rows, $this->columns));
     }
 
     /**
