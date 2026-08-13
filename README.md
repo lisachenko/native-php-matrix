@@ -43,15 +43,117 @@ Operator-level failures are a different story, and it is worth being blunt about
 
 Generics are honest about arithmetic: `Matrix<int>` divided by `2` is a `Matrix<int|float>`, because PHP's `/` widens. Nothing pretends to preserve `T` where the maths does not.
 
+## ⚡ Acceleration
+
+The operators are the interesting part; the arithmetic underneath them is now interchangeable. `Matrix` asks a registry which **driver** should carry out an operation and hands it plain arrays — validation, dimensions and object identity never leave the class. Three drivers ship with the package:
+
+| Driver | Runs on | Uses | Notes |
+|---|---|---|---|
+| `php` | the interpreter | ordinary PHP loops | Always available, the only driver that returns **integers** |
+| `blas` | CPU | OpenBLAS `cblas_dgemm` / `cblas_daxpy` / `cblas_dscal` over FFI | Double precision, needs the OpenBLAS shared library |
+| `clblast` | GPU | [CLBlast](https://github.com/CNugteren/CLBlast) on OpenCL | NVIDIA, AMD, Intel — including laptop iGPUs — or the CPU through PoCL |
+
+Same interface for everyone else: `cuBLAS`, a `ggml` driver for the Vulkan route, and Metal are all a `BackendInterface` implementation away — **PRs welcome**.
+
+### Choosing a driver
+
+```bash
+NATIVE_PHP_MATRIX_BACKEND=blas php your-script.php      # php | blas | clblast | auto (default)
+NATIVE_PHP_MATRIX_CL_DEVICE=cpu php your-script.php     # gpu (default) | cpu | all — clblast only
+```
+
+```php
+use Lisachenko\NativePhpMatrix\Backend\Backends;
+
+Backends::available();                 // ['php', 'blas'] — probed, not guessed
+Backends::use('blas');                 // InvalidArgumentException / BackendNotAvailableException, both catchable
+Backends::register('cublas', static fn (): BackendInterface => new CuBlasBackend());
+```
+
+Selection is validated **eagerly**, in userland — an unknown or unusable driver throws where you can still catch it, instead of surfacing as a fatal error from inside an operator hook later. Availability is not a guess either: probing loads the library and runs a real 1×1 multiplication with it.
+
+### Installing the libraries
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install libopenblas0                                     # blas
+sudo apt-get install libclblast1 ocl-icd-libopencl1                   # clblast, plus your vendor's ICD
+sudo apt-get install pocl-opencl-icd                                  # ...or PoCL, an OpenCL runtime on the CPU
+
+# macOS
+brew install openblas clblast
+```
+
+### Two rules worth knowing
+
+**Accelerated drivers are float-only.** Hardware kernels compute in double precision, so `blas` and `clblast` cast integer cells to floats and return a `Matrix<float>` — `new Matrix([[1, 2]]) + new Matrix([[3, 4]])` gives `[[4.0, 6.0]]` on them. Use `$matrix->asFloat()` when you want that conversion to be explicit in your own code.
+
+**`auto` is deliberately boring.** It picks OpenBLAS when the operation involves floats and OpenBLAS is loadable, keeps every all-integer operation on the pure-PHP driver so integers stay integers, and never selects a GPU on your behalf — moving data across a bus is a decision, not a default. If an accelerated driver fails mid-operation, `auto` recomputes in pure PHP rather than taking down the request.
+
+For web SAPIs, set `OPENBLAS_NUM_THREADS=1`: an OpenBLAS thread pool per PHP-FPM worker is rarely what you want.
+
+### Where the crossover is
+
+Acceleration is not free: every operation copies cells into a buffer and reads them back, and the result is validated into a new `Matrix`. That overhead is proportional to the number of cells, while the gain is proportional to the work — so it pays off exactly where the work grows faster than the data.
+
+- **Matrix multiplication** does O(n³) work over O(n²) cells. It wins from about 64×64 upwards, and the gap widens with every size.
+- **Element-wise operations** (`+`, `-`, scaling) do O(n²) work over O(n²) cells. There is nothing for a kernel to amortise, and the pure-PHP driver is *faster* than any driver that has to marshal buffers first — see the numbers below. Pin `NATIVE_PHP_MATRIX_BACKEND=php` if that is all your workload does.
+
+## 🤖 Built for the AI/ML era
+
+> *The syntax of the paper, the speed of the metal, in the language of the web.*
+
+A neural network layer is one line of linear algebra, and with real operators it is one line of PHP:
+
+```php
+$logits = $input * $weights + $bias;   // dgemm on your CPU or GPU, dispatched by the Zend Engine
+```
+
+Inference is dominated by exactly this product. So is a semantic search that scores an embedding against a matrix of documents, so is re-ranking in a RAG pipeline, so is a recommender scoring a user vector against a catalogue. All of them are matrix multiplications — the operation this library hands to OpenBLAS or to your GPU.
+
+That matters for PHP specifically. PHP still runs a large share of the web — WordPress alone is around 43% of it — and until now anything resembling machine learning meant a Python sidecar, a paid API, or shipping your users' data to somebody else's inference endpoint. This runs **in-process**, in the language the application is already written in.
+
+The ecosystem agrees on the route: [Rindow Math Matrix](https://github.com/rindow/rindow-math-matrix) reaches OpenBLAS and CLBlast the same way, [TransformersPHP](https://github.com/CodeWithKyrian/transformers-php) runs ONNX models, and [RubixML/Tensor](https://github.com/RubixML/Tensor) is a compiled extension. What none of them have is the operators themselves: here `$a * $b` **is** the multiplication, dispatched by the engine, not a method call dressed up as one. And because the GPU path is OpenCL rather than CUDA, it reaches the integrated GPU in a laptop as readily as a datacentre card.
+
+### Measured numbers
+
+Matrix multiplication — the operation inference actually spends its time in:
+
+| Operation | Size | `php` | `blas` | `clblast` | `blas` speed-up | `clblast` speed-up |
+| --- | --- | --- | --- | --- | --- | --- |
+| Multiplication `$a * $b` | 64×64 | 3.67 ms (0.1 GFLOP/s) | 0.41 ms (1.3 GFLOP/s) | 0.86 ms (0.6 GFLOP/s) | ×8.9 | ×4.3 |
+| Multiplication `$a * $b` | 128×128 | 28.02 ms (0.1 GFLOP/s) | 1.49 ms (2.8 GFLOP/s) | 2.38 ms (1.8 GFLOP/s) | ×18.8 | ×11.8 |
+| Multiplication `$a * $b` | 256×256 | 223.88 ms (0.1 GFLOP/s) | 5.75 ms (5.8 GFLOP/s) | 9.08 ms (3.7 GFLOP/s) | ×38.9 | ×24.7 |
+| Multiplication `$a * $b` | 512×512 | 1,814.76 ms (0.1 GFLOP/s) | 27.49 ms (9.8 GFLOP/s) | 39.52 ms (6.8 GFLOP/s) | ×66.0 | ×45.9 |
+| Multiplication `$a * $b` | 1024×1024 | 15,026.38 ms (0.1 GFLOP/s) | 113.61 ms (18.9 GFLOP/s) | 225.65 ms (9.5 GFLOP/s) | ×132.3 | ×66.6 |
+
+Element-wise operations, where the honest answer is that acceleration costs more than it saves:
+
+| Operation | Size | `php` | `blas` | `clblast` | `blas` speed-up | `clblast` speed-up |
+| --- | --- | --- | --- | --- | --- | --- |
+| Addition `$a + $b` | 64×64 | 0.15 ms | 0.37 ms | 0.95 ms | ×0.4 | ×0.2 |
+| Addition `$a + $b` | 512×512 | 8.41 ms | 25.27 ms | 28.48 ms | ×0.3 | ×0.3 |
+| Scaling `$a * 2.5` | 64×64 | 0.12 ms | 0.31 ms | 0.78 ms | ×0.4 | ×0.2 |
+| Scaling `$a * 2.5` | 512×512 | 6.91 ms | 24.45 ms | 22.00 ms | ×0.3 | ×0.3 |
+
+<sub>PHP 8.5.9 on Linux x86_64, Intel® Xeon® @ 2.10 GHz (shared cloud container), OpenBLAS 0.3.26, CLBlast 1.6.2 on PoCL 5.0 with `NATIVE_PHP_MATRIX_CL_DEVICE=cpu`. Median of 5 runs, one warm-up discarded, timing the whole PHP-level operation including packing, unpacking and validation.</sub>
+
+**These numbers are from a shared container without a GPU** — the `clblast` column is CLBlast running on the CPU through PoCL, which is a portability proof, not a GPU benchmark. On real hardware the GPU column is a different story, and the OpenBLAS column depends heavily on core count. Measure your own:
+
+```bash
+composer bench
+composer bench -- --sizes=64,128,256,512,1024 --ops=gemm --repeat=5 --markdown
+```
+
 ## How it works
 
 Three moving parts, in order:
 
 1. **`bootstrap.php`** is registered in Composer's `files` autoload, so it runs the moment you `require vendor/autoload.php`. It calls `ZEngine\Core::init()`, which validates that the FFI struct definitions match the exact PHP build you are running.
 2. It then calls `installExtensionHandlers()` on `ZEngine\Reflection\ReflectionClass` for `Matrix`, wiring the class's `create_object`, `do_operation` and `compare` slots to the engine trampolines. Order matters — `create_object` allocates the memory the other handlers live in.
-3. **`Matrix::__doOperation()`** and **`Matrix::__compare()`** are static hooks. The engine hands them a `DoOperationHook` / `CompareValuesHook` describing the opcode and both operands; they dispatch to ordinary, boring, pure-PHP methods (`sum()`, `subtract()`, `multiply()`, `multiplyByScalar()`, `divideByScalar()`, `powByScalar()`, `equals()`).
+3. **`Matrix::__doOperation()`** and **`Matrix::__compare()`** are static hooks. The engine hands them a `DoOperationHook` / `CompareValuesHook` describing the opcode and both operands; they dispatch to ordinary, boring methods (`sum()`, `subtract()`, `multiply()`, `multiplyByScalar()`, `divideByScalar()`, `powByScalar()`, `equals()`), which ask the backend registry which driver should do the arithmetic.
 
-The maths is plain PHP. The magic is only in getting the engine to call it.
+The maths is plain PHP — or plain BLAS, if you asked for it. The magic is only in getting the engine to call it.
 
 ## Requirements
 
@@ -174,7 +276,9 @@ Tracked as [GitHub issues](https://github.com/lisachenko/native-php-matrix/issue
 - **`count($matrix)`** — row count through `Countable`, installed at the engine level
 - **`foreach` iteration** — row-by-row traversal via the `get_iterator` handler
 - **Friendly `var_dump()`** — a `get_debug_info` handler that prints the matrix instead of its internals
-- **FFI BLAS backend** — hand multiplication off to a real BLAS library for performance, keeping the pure-PHP path as the fallback
+- ~~**FFI BLAS backend**~~ — **done**: see [⚡ Acceleration](#-acceleration), with OpenBLAS on the CPU and CLBlast on the GPU behind an interchangeable driver interface
+- **More BLAS coverage** — transposition, `gemv`, in-place accumulation and the fused `$input * $weights + $bias` of an inference layer
+- **More drivers** — cuBLAS, a `ggml` driver for the Vulkan route, Metal — same `BackendInterface`, PRs welcome
 
 ## Contributing
 
@@ -184,6 +288,7 @@ The repository ships an agent/contributor contract in **[CLAUDE.md](CLAUDE.md)**
 composer test        # PHPUnit 12, .phpt functional suite
 composer phpstan     # static analysis at level max
 composer cs:check    # coding standards (PER-CS2.0); composer cs:fix to apply
+composer bench       # compare the drivers on your own hardware
 ```
 
 ## License
