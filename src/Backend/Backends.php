@@ -59,6 +59,11 @@ final class Backends
     public const string PHP = 'php';
 
     /**
+     * Name of the OpenBLAS CPU driver
+     */
+    public const string BLAS = 'blas';
+
+    /**
      * Registered driver factories, keyed by driver name
      *
      * Null until the built-in drivers are registered, which happens on first use.
@@ -85,6 +90,11 @@ final class Backends
      * Currently selected driver name, or {@see self::AUTO}
      */
     private static string $selected = self::AUTO;
+
+    /**
+     * Driver that automatic routing uses for operations involving floats, resolved once per process
+     */
+    private static ?BackendInterface $automaticFloatBackend = null;
 
     /**
      * Selects the driver to use for every following operation
@@ -136,6 +146,7 @@ final class Backends
         self::$factories  = $factories;
 
         unset(self::$instances[$name], self::$availability[$name]);
+        self::$automaticFloatBackend = null;
     }
 
     /**
@@ -183,10 +194,11 @@ final class Backends
      */
     public static function reset(): void
     {
-        self::$factories    = null;
-        self::$instances    = [];
-        self::$availability = [];
-        self::$selected     = self::AUTO;
+        self::$factories             = null;
+        self::$instances             = [];
+        self::$availability          = [];
+        self::$selected              = self::AUTO;
+        self::$automaticFloatBackend = null;
     }
 
     /**
@@ -223,9 +235,29 @@ final class Backends
         }
 
         // Automatic routing never sends integers to an accelerated driver, because those compute in double
-        // precision and would turn an exact integer result into a float. Operations on floats are the ones open
-        // to acceleration; no accelerated driver is registered in this build, so all of them stay on pure PHP
-        return self::instance(self::PHP);
+        // precision and would turn an exact integer result into a float
+        if (!$operandsContainFloats) {
+            return self::instance(self::PHP);
+        }
+
+        return self::$automaticFloatBackend ??= self::resolveAutomaticFloatBackend();
+    }
+
+    /**
+     * Picks the driver that automatic routing uses for float operands
+     *
+     * Only CPU drivers take part — sending data to a GPU is a decision, not a default — and the winner is wrapped
+     * so that a hardware failure at operation time degrades into a pure-PHP recomputation instead of a fatal
+     * error inside an engine hook.
+     */
+    private static function resolveAutomaticFloatBackend(): BackendInterface
+    {
+        $php = self::instance(self::PHP);
+        if (self::probe(self::BLAS)) {
+            return new FallbackBackend(self::instance(self::BLAS), $php);
+        }
+
+        return $php;
     }
 
     /**
@@ -284,7 +316,8 @@ final class Backends
     {
         if (self::$factories === null) {
             self::$factories = [
-                self::PHP => static fn(): BackendInterface => new PhpBackend(),
+                self::PHP  => static fn(): BackendInterface => new PhpBackend(),
+                self::BLAS => static fn(): BackendInterface => new BlasBackend(),
             ];
         }
 

@@ -5,3 +5,19 @@ parameters:
         - src
         - bootstrap.php
     treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        # FFI buffers are indexable at runtime — that is the whole point of a "double[n]" allocation — but PHPStan
+        # models FFI\CData as a plain object with neither ArrayAccess nor a known cell type. Reading a cell is
+        # therefore "mixed" to it, and writing one degrades the variable to "mixed" as well. Both are confined to
+        # the two helpers of the accelerated drivers that touch raw memory at all
+        -
+            identifier: offsetAccess.nonOffsetAccessible
+            path: src/Backend/AcceleratedBackendTrait.php
+        -
+            identifier: return.type
+            path: src/Backend/AcceleratedBackendTrait.php
+        # The cblas_* methods exist only after FFI::cdef() has parsed the inline C declarations of this driver, so
+        # no static analysis can see them on the FFI instance
+        -
+            identifier: method.notFound
+            path: src/Backend/BlasBackend.php

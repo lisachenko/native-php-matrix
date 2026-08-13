@@ -2,7 +2,12 @@
     "name": "lisachenko/native-php-matrix",
     "description": "PHP extension that provides Matrix class powered with overloaded operators",
     "type": "library",
-    "keywords": ["ffi", "matrix", "operator-overloading", "z-engine"],
+    "keywords": [
+        "ffi",
+        "matrix",
+        "operator-overloading",
+        "z-engine"
+    ],
     "license": "MIT",
     "authors": [
         {
@@ -22,11 +27,16 @@
         "phpstan/phpstan": "^2.1",
         "phpunit/phpunit": "^12.5"
     },
+    "suggest": {
+        "lib-openblas": "Install the OpenBLAS shared library (Debian/Ubuntu: libopenblas0, Homebrew: openblas) to enable the CPU-accelerated \"blas\" backend"
+    },
     "autoload": {
         "psr-4": {
             "Lisachenko\\NativePhpMatrix\\": "src/"
         },
-        "files": ["bootstrap.php"]
+        "files": [
+            "bootstrap.php"
+        ]
     },
     "scripts": {
         "test": "phpunit",
