@@ -20,8 +20,18 @@ jobs:
       fail-fast: false
       matrix:
         php: ['8.4', '8.5']
+    # The suite fails on skipped tests, so every acceleration library is installed here: a skipped backend test
+    # means a broken environment rather than an absent GPU. PoCL provides the OpenCL device, on the CPU
+    env:
+      NATIVE_PHP_MATRIX_CL_DEVICE: cpu
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install acceleration libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libopenblas0 libclblast1 ocl-icd-libopencl1 pocl-opencl-icd
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -36,6 +46,46 @@ jobs:
 
       - name: Run test suite
         run: composer test
+
+      # Backend-pinned tests carry their own --ENV--, which overrides this one: what the second run really covers
+      # is every other test computing on the pure-PHP driver, with automatic routing switched off
+      - name: Run test suite on the pure PHP backend
+        run: composer test
+        env:
+          NATIVE_PHP_MATRIX_BACKEND: php
+
+  gpu-path:
+    name: GPU code path (CLBlast on PoCL)
+    runs-on: ubuntu-latest
+    # The device code path gets its own red/green signal, on the CPU device PoCL provides, so a broken GPU driver
+    # is visible without reading through the rest of the suite. Only the driver's own tests run: pinning an
+    # accelerated backend process-wide turns integer results into floats by design, which is precisely what the
+    # tests asserting integer output would report as a failure
+    env:
+      NATIVE_PHP_MATRIX_BACKEND: clblast
+      NATIVE_PHP_MATRIX_CL_DEVICE: cpu
+      OPENBLAS_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install acceleration libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libopenblas0 libclblast1 ocl-icd-libopencl1 pocl-opencl-icd
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: ffi
+          ini-values: ffi.enable=1, zend.assertions=1, opcache.jit=off
+          coverage: none
+
+      - uses: ramsey/composer-install@v4
+
+      # PHPUnit's --filter matches test method names, which .phpt files do not have, so the files are named
+      - name: Run the clblast backend tests
+        run: vendor/bin/phpunit tests/Functional/testClblast*.phpt
 
   static-analysis:
     name: PHPStan (level max, PHP ${{ matrix.php }})
