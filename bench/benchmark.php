@@ -12,47 +12,10 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix\Bench;
 
-use function array_filter;
-use function array_map;
-use function array_slice;
-use function array_values;
-use function count;
-use function explode;
-use function file_get_contents;
-use function getenv;
-use function getopt;
-use function hrtime;
-use function implode;
-use function in_array;
-
 use InvalidArgumentException;
-
-use function is_array;
-use function is_string;
-
 use Lisachenko\NativePhpMatrix\Backend\BackendNotAvailableException;
 use Lisachenko\NativePhpMatrix\Backend\Backends;
 use Lisachenko\NativePhpMatrix\Matrix;
-
-use function max;
-use function mt_getrandmax;
-use function mt_rand;
-use function mt_srand;
-use function number_format;
-
-use const PHP_EOL;
-
-use function php_uname;
-
-use const PHP_VERSION;
-
-use function preg_match;
-use function printf;
-use function range;
-use function sort;
-use function sprintf;
-use function str_repeat;
-use function trim;
 
 require __DIR__ . '/../vendor/autoload.php';
 

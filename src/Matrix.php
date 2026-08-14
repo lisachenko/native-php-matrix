@@ -12,29 +12,9 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix;
 
-use function array_filter;
-
-use const ARRAY_FILTER_USE_KEY;
-
-use function array_is_list;
-use function count;
-use function get_mangled_object_vars;
-use function implode;
-
 use InvalidArgumentException;
-
-use function is_array;
-use function is_float;
-use function is_int;
-use function is_numeric;
-use function is_string;
-
 use Lisachenko\NativePhpMatrix\Backend\Backends;
 use LogicException;
-
-use function sprintf;
-use function str_starts_with;
-
 use ZEngine\ClassExtension\Hook\CastObjectHook;
 use ZEngine\ClassExtension\Hook\CastType;
 use ZEngine\ClassExtension\Hook\CompareValuesHook;

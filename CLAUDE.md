@@ -282,6 +282,13 @@ Scopes in use: `matrix`, `backend`, `bootstrap`, `tests`, `ci`, `docs`.
 Code style is **PER-CS2.0**, applied by php-cs-fixer. Run `composer cs:fix` before
 proposing a change rather than hand-formatting.
 
+**Global functions and constants are never imported.** Call `count()`, `sprintf()`,
+`is_int()` and friends unqualified, and write `PHP_EOL` or `ARRAY_FILTER_USE_KEY`
+as they are — no `use function` or `use const` lines anywhere. Only classes,
+interfaces, traits and enums get a `use` statement. The import lists were pure
+noise, and the fixer neither adds nor removes these imports, so the convention is
+stable under `composer cs:fix`.
+
 ## Dependency policy
 
 - `lisachenko/z-engine` is required as **`8.4.x-dev || 8.5.x-dev`** — one dev line

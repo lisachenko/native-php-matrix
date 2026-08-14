@@ -12,18 +12,8 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix\Backend;
 
-use function array_keys;
-use function getenv;
-use function implode;
-
 use InvalidArgumentException;
-
-use function is_string;
-use function sprintf;
-
 use Throwable;
-
-use function trim;
 
 /**
  * Registry of matrix arithmetic drivers and the policy that picks one per operation

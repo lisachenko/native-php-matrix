@@ -15,21 +15,8 @@ namespace Lisachenko\NativePhpMatrix\Backend;
 use FFI;
 use FFI\CData;
 use FFI\Exception as FFIException;
-
-use function get_debug_type;
-use function getenv;
-use function implode;
-use function is_int;
-use function is_string;
-
 use RuntimeException;
-
-use function sprintf;
-use function strtolower;
-
 use Throwable;
-
-use function trim;
 
 /**
  * GPU driver backed by CLBlast on top of OpenCL, reached through FFI

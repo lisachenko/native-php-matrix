@@ -12,9 +12,6 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix\Backend;
 
-use function array_column;
-use function array_keys;
-
 /**
  * Reference driver: the original interpreted PHP arithmetic
  *

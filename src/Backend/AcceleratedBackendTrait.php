@@ -12,12 +12,8 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix\Backend;
 
-use function array_map;
-
 use FFI;
 use FFI\CData;
-
-use function range;
 
 /**
  * Shared plumbing of the drivers that hand their arithmetic to a numeric library
