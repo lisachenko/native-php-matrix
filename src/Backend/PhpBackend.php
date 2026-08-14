@@ -12,13 +12,21 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix\Backend;
 
+use FFI\CData;
+
 /**
- * Reference driver: the original interpreted PHP arithmetic
+ * Reference driver: the arithmetic carried out by the interpreter itself
  *
- * The loop bodies are the ones this library shipped before the drivers existed, kept verbatim down to the
- * iteration order. That matters for more than nostalgia: PHP arithmetic preserves integers, and summing the
- * products of a row in a different order can change the last bits of a float result. This driver is always
- * available, it is the fallback of every other one, and it is the only driver that returns integers.
+ * The loop bodies are the ones this library shipped before the drivers existed; what changed is what they walk
+ * over. Cells now live in a flat `double[]` buffer rather than in nested arrays, so the loops index offsets
+ * instead of dereferencing rows, and the multiplication keeps its original accumulation order — summing the
+ * products of a row in a different order can change the last bits of a float result, and the parity tests hold
+ * this driver and the accelerated ones to the same answer.
+ *
+ * Reading and writing a cell through `FFI\CData` is slower than touching a PHP array element, which makes this
+ * driver slower than it used to be on paper. That is a deliberate trade: it is the fallback that must work with
+ * no library installed at all, while every operation that matters for speed is now handed to a kernel without a
+ * conversion in between.
  */
 final class PhpBackend implements BackendInterface
 {
@@ -33,16 +41,12 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function sum(array $left, array $right, int $rows, int $columns): array
+    public function sum(CData $left, CData $right, int $rows, int $columns): CData
     {
-        $result = [];
-        foreach ($left as $rowIndex => $row) {
-            $anotherRow = $right[$rowIndex];
-            $resultRow  = [];
-            foreach ($row as $columnIndex => $cellValue) {
-                $resultRow[] = $cellValue + $anotherRow[$columnIndex];
-            }
-            $result[] = $resultRow;
+        $count  = $rows * $columns;
+        $result = Float64Buffer::allocate($count);
+        for ($cell = 0; $cell < $count; $cell++) {
+            $result[$cell] = $left[$cell] + $right[$cell];
         }
 
         return $result;
@@ -51,16 +55,12 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function subtract(array $left, array $right, int $rows, int $columns): array
+    public function subtract(CData $left, CData $right, int $rows, int $columns): CData
     {
-        $result = [];
-        foreach ($left as $rowIndex => $row) {
-            $anotherRow = $right[$rowIndex];
-            $resultRow  = [];
-            foreach ($row as $columnIndex => $cellValue) {
-                $resultRow[] = $cellValue - $anotherRow[$columnIndex];
-            }
-            $result[] = $resultRow;
+        $count  = $rows * $columns;
+        $result = Float64Buffer::allocate($count);
+        for ($cell = 0; $cell < $count; $cell++) {
+            $result[$cell] = $left[$cell] - $right[$cell];
         }
 
         return $result;
@@ -69,26 +69,33 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function multiply(array $left, array $right, int $rows, int $inner, int $columns): array
+    public function multiply(CData $left, CData $right, int $rows, int $inner, int $columns): CData
     {
-        // Columns of the multiplier are extracted only once, they are reused for every row of the left operand
-        $multiplierColumns = [];
-        foreach (array_keys($right[0]) as $column) {
-            $multiplierColumns[] = array_column($right, $column);
+        // The multiplier is consumed column by column, and a column of a row-major buffer is strided: consecutive
+        // cells sit $columns doubles apart, so at any real size every read is a cache miss. Transposing it once,
+        // for O(inner * columns), is the buffer-level form of the array_column() this loop used to do — after it
+        // both operands are walked contiguously in the inner loop
+        $transposed = Float64Buffer::allocate($inner * $columns);
+        for ($row = 0; $row < $inner; $row++) {
+            $rowOffset = $row * $columns;
+            for ($column = 0; $column < $columns; $column++) {
+                $transposed[$column * $inner + $row] = $right[$rowOffset + $column];
+            }
         }
 
-        $result = [];
-        foreach ($left as $rowItems) {
-            $resultRow = [];
-            foreach ($multiplierColumns as $columnItems) {
-                $cellValue = 0;
-                foreach ($rowItems as $key => $value) {
-                    $cellValue += $value * $columnItems[$key];
+        $result = Float64Buffer::allocate($rows * $columns);
+        for ($row = 0; $row < $rows; $row++) {
+            $leftOffset   = $row * $inner;
+            $resultOffset = $row * $columns;
+            for ($column = 0; $column < $columns; $column++) {
+                $columnOffset = $column * $inner;
+                // Summation order is unchanged, which is what keeps this driver bit-identical to the kernels
+                $cellValue = 0.0;
+                for ($step = 0; $step < $inner; $step++) {
+                    $cellValue += $left[$leftOffset + $step] * $transposed[$columnOffset + $step];
                 }
-
-                $resultRow[] = $cellValue;
+                $result[$resultOffset + $column] = $cellValue;
             }
-            $result[] = $resultRow;
         }
 
         return $result;
@@ -97,15 +104,12 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function multiplyByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function multiplyByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
-        $result = [];
-        foreach ($matrix as $row) {
-            $resultRow = [];
-            foreach ($row as $cellValue) {
-                $resultRow[] = $cellValue * $value;
-            }
-            $result[] = $resultRow;
+        $count  = $rows * $columns;
+        $result = Float64Buffer::allocate($count);
+        for ($cell = 0; $cell < $count; $cell++) {
+            $result[$cell] = $matrix[$cell] * $value;
         }
 
         return $result;
@@ -114,15 +118,12 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function divideByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function divideByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
-        $result = [];
-        foreach ($matrix as $row) {
-            $resultRow = [];
-            foreach ($row as $cellValue) {
-                $resultRow[] = $cellValue / $value;
-            }
-            $result[] = $resultRow;
+        $count  = $rows * $columns;
+        $result = Float64Buffer::allocate($count);
+        for ($cell = 0; $cell < $count; $cell++) {
+            $result[$cell] = $matrix[$cell] / $value;
         }
 
         return $result;
@@ -131,15 +132,12 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function powByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function powByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
-        $result = [];
-        foreach ($matrix as $row) {
-            $resultRow = [];
-            foreach ($row as $cellValue) {
-                $resultRow[] = $cellValue ** $value;
-            }
-            $result[] = $resultRow;
+        $count  = $rows * $columns;
+        $result = Float64Buffer::allocate($count);
+        for ($cell = 0; $cell < $count; $cell++) {
+            $result[$cell] = $matrix[$cell] ** $value;
         }
 
         return $result;

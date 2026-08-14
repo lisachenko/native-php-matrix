@@ -10,7 +10,9 @@
  */
 declare(strict_types=1);
 
+use FFI\CData;
 use Lisachenko\NativePhpMatrix\Backend\BackendInterface;
+use Lisachenko\NativePhpMatrix\Backend\Float64Buffer;
 use Lisachenko\NativePhpMatrix\Backend\PhpBackend;
 
 /**
@@ -19,6 +21,9 @@ use Lisachenko\NativePhpMatrix\Backend\PhpBackend;
  * A real out-of-tree driver would call into its own library here. This one adds an unmistakable offset to every
  * sum instead, so that seeing the marker in the result of `$a + $b` proves the operator hook went all the way
  * through the registry into a driver that this package does not ship. Every other operation is delegated.
+ *
+ * It also stands for the buffer contract: the operands are read, never written, and the result is a buffer this
+ * driver allocated itself.
  */
 final class MarkerBackend implements BackendInterface
 {
@@ -36,42 +41,38 @@ final class MarkerBackend implements BackendInterface
         return true;
     }
 
-    public function sum(array $left, array $right, int $rows, int $columns): array
+    public function sum(CData $left, CData $right, int $rows, int $columns): CData
     {
-        $result = [];
-        foreach ($left as $rowIndex => $row) {
-            $anotherRow = $right[$rowIndex];
-            $resultRow  = [];
-            foreach ($row as $columnIndex => $cellValue) {
-                $resultRow[] = $cellValue + $anotherRow[$columnIndex] + self::MARKER;
-            }
-            $result[] = $resultRow;
+        $count  = $rows * $columns;
+        $result = Float64Buffer::allocate($count);
+        for ($cell = 0; $cell < $count; $cell++) {
+            $result[$cell] = $left[$cell] + $right[$cell] + self::MARKER;
         }
 
         return $result;
     }
 
-    public function subtract(array $left, array $right, int $rows, int $columns): array
+    public function subtract(CData $left, CData $right, int $rows, int $columns): CData
     {
         return $this->delegate->subtract($left, $right, $rows, $columns);
     }
 
-    public function multiply(array $left, array $right, int $rows, int $inner, int $columns): array
+    public function multiply(CData $left, CData $right, int $rows, int $inner, int $columns): CData
     {
         return $this->delegate->multiply($left, $right, $rows, $inner, $columns);
     }
 
-    public function multiplyByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function multiplyByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
         return $this->delegate->multiplyByScalar($matrix, $value, $rows, $columns);
     }
 
-    public function divideByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function divideByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
         return $this->delegate->divideByScalar($matrix, $value, $rows, $columns);
     }
 
-    public function powByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function powByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
         return $this->delegate->powByScalar($matrix, $value, $rows, $columns);
     }

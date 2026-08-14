@@ -12,12 +12,26 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix\Backend;
 
+use FFI\CData;
+
 /**
  * Contract of an interchangeable matrix arithmetic driver
  *
- * A backend is a numeric kernel and nothing else: it receives plain arrays with the dimensions already known and
- * returns a plain array of the same shape. Validation, dimension checks and the object identity remain the
- * responsibility of {@see \Lisachenko\NativePhpMatrix\Matrix}, so a driver never has to construct one.
+ * A backend is a numeric kernel and nothing else: it receives the operands as raw row-major `double[]` buffers
+ * with the dimensions already known, and returns a freshly allocated buffer of the same kind. Validation,
+ * dimension checks and the object identity remain the responsibility of
+ * {@see \Lisachenko\NativePhpMatrix\Matrix}, so a driver never has to construct one.
+ *
+ * The operands are the buffers the matrices are actually stored in, handed over without a copy. That is the whole
+ * point of the shape: a PHP array would have to be packed into contiguous doubles before any kernel could touch
+ * it and unpacked afterwards, which for an element-wise operation costs more than the arithmetic itself. Two
+ * obligations come with the privilege:
+ *
+ * - **Operands are read-only.** They belong to the matrices the caller still holds. A kernel that accumulates
+ *   into one of its arguments — `daxpy` and `dscal` both do — copies it into the result buffer first
+ *   ({@see Float64Buffer::copyOf()}) and works on the copy.
+ * - **The result is a fresh allocation.** Never return an operand, and never return a buffer that outlives the
+ *   call in some driver-owned cache: the returned buffer becomes the storage of a new matrix.
  *
  * Two rules bind every implementation:
  *
@@ -25,9 +39,9 @@ namespace Lisachenko\NativePhpMatrix\Backend;
  *   where a thrown exception becomes an engine-level fatal error. Report an unusable driver from
  *   {@see self::isAvailable()} — which must swallow its own failures and return false — instead of throwing from
  *   an operation. The registry validates a selection eagerly, in ordinary userland code, for the same reason.
- * - **Accelerated drivers are float-only.** Hardware kernels compute in double precision, so a driver that is not
- *   the pure-PHP one casts integer input to float and returns floats. Automatic routing takes that into account
- *   and keeps all-integer arithmetic on the pure-PHP driver.
+ * - **Everything is float64.** There is no integer path left to preserve: a matrix stores double precision cells,
+ *   every driver reads and writes double precision cells, and the pure-PHP driver produces bit-identical results
+ *   to the accelerated ones for values that are exactly representable.
  */
 interface BackendInterface
 {
@@ -43,76 +57,76 @@ interface BackendInterface
     /**
      * Adds two matrices of the same shape element-wise
      *
-     * @param non-empty-list<non-empty-list<int|float>> $left    Left operand cells
-     * @param non-empty-list<non-empty-list<int|float>> $right   Right operand cells, same shape as the left one
-     * @param positive-int                              $rows    Number of rows in both operands
-     * @param positive-int                              $columns Number of columns in both operands
+     * @param CData        $left    Left operand cells, row-major `double[rows * columns]`
+     * @param CData        $right   Right operand cells, same shape as the left one
+     * @param positive-int $rows    Number of rows in both operands
+     * @param positive-int $columns Number of columns in both operands
      *
-     * @return non-empty-list<non-empty-list<int|float>> Sum of both operands
+     * @return CData Freshly allocated `double[rows * columns]` holding the sum
      */
-    public function sum(array $left, array $right, int $rows, int $columns): array;
+    public function sum(CData $left, CData $right, int $rows, int $columns): CData;
 
     /**
      * Subtracts the right matrix from the left one element-wise
      *
-     * @param non-empty-list<non-empty-list<int|float>> $left    Left operand cells
-     * @param non-empty-list<non-empty-list<int|float>> $right   Right operand cells, same shape as the left one
-     * @param positive-int                              $rows    Number of rows in both operands
-     * @param positive-int                              $columns Number of columns in both operands
+     * @param CData        $left    Left operand cells, row-major `double[rows * columns]`
+     * @param CData        $right   Right operand cells, same shape as the left one
+     * @param positive-int $rows    Number of rows in both operands
+     * @param positive-int $columns Number of columns in both operands
      *
-     * @return non-empty-list<non-empty-list<int|float>> Difference of both operands
+     * @return CData Freshly allocated `double[rows * columns]` holding the difference
      */
-    public function subtract(array $left, array $right, int $rows, int $columns): array;
+    public function subtract(CData $left, CData $right, int $rows, int $columns): CData;
 
     /**
      * Multiplies two matrices with matching inner dimensions
      *
-     * @param non-empty-list<non-empty-list<int|float>> $left    Left operand cells, shaped rows × inner
-     * @param non-empty-list<non-empty-list<int|float>> $right   Right operand cells, shaped inner × columns
-     * @param positive-int                              $rows    Number of rows of the left operand
-     * @param positive-int                              $inner   Shared dimension: left columns and right rows
-     * @param positive-int                              $columns Number of columns of the right operand
+     * @param CData        $left    Left operand cells, row-major `double[rows * inner]`
+     * @param CData        $right   Right operand cells, row-major `double[inner * columns]`
+     * @param positive-int $rows    Number of rows of the left operand
+     * @param positive-int $inner   Shared dimension: left columns and right rows
+     * @param positive-int $columns Number of columns of the right operand
      *
-     * @return non-empty-list<non-empty-list<int|float>> Product, shaped rows × columns
+     * @return CData Freshly allocated `double[rows * columns]` holding the product
      */
-    public function multiply(array $left, array $right, int $rows, int $inner, int $columns): array;
+    public function multiply(CData $left, CData $right, int $rows, int $inner, int $columns): CData;
 
     /**
      * Multiplies every cell by a scalar value
      *
-     * @param non-empty-list<non-empty-list<int|float>> $matrix  Operand cells
-     * @param int|float                                 $value   Multiplier
-     * @param positive-int                              $rows    Number of rows in the operand
-     * @param positive-int                              $columns Number of columns in the operand
+     * @param CData        $matrix  Operand cells, row-major `double[rows * columns]`
+     * @param float        $value   Multiplier
+     * @param positive-int $rows    Number of rows in the operand
+     * @param positive-int $columns Number of columns in the operand
      *
-     * @return non-empty-list<non-empty-list<int|float>> Scaled cells
+     * @return CData Freshly allocated `double[rows * columns]` holding the scaled cells
      */
-    public function multiplyByScalar(array $matrix, int|float $value, int $rows, int $columns): array;
+    public function multiplyByScalar(CData $matrix, float $value, int $rows, int $columns): CData;
 
     /**
      * Divides every cell by a scalar value
      *
-     * @param non-empty-list<non-empty-list<int|float>> $matrix  Operand cells
-     * @param int|float                                 $value   Divider
-     * @param positive-int                              $rows    Number of rows in the operand
-     * @param positive-int                              $columns Number of columns in the operand
+     * @param CData        $matrix  Operand cells, row-major `double[rows * columns]`
+     * @param float        $value   Divider
+     * @param positive-int $rows    Number of rows in the operand
+     * @param positive-int $columns Number of columns in the operand
      *
-     * @return non-empty-list<non-empty-list<int|float>> Divided cells
+     * @return CData Freshly allocated `double[rows * columns]` holding the divided cells
      */
-    public function divideByScalar(array $matrix, int|float $value, int $rows, int $columns): array;
+    public function divideByScalar(CData $matrix, float $value, int $rows, int $columns): CData;
 
     /**
      * Raises every cell to the power of a scalar value
      *
-     * BLAS has no exponentiation primitive, so accelerated drivers implement this one with a float loop. It is
-     * part of the contract only to keep their float-only promise for every operator the class overloads.
+     * BLAS has no exponentiation primitive, so accelerated drivers implement this one with a loop over the cells.
+     * It is part of the contract so that every operator the class overloads has a driver-level counterpart.
      *
-     * @param non-empty-list<non-empty-list<int|float>> $matrix  Operand cells
-     * @param int|float                                 $value   Exponent
-     * @param positive-int                              $rows    Number of rows in the operand
-     * @param positive-int                              $columns Number of columns in the operand
+     * @param CData        $matrix  Operand cells, row-major `double[rows * columns]`
+     * @param float        $value   Exponent
+     * @param positive-int $rows    Number of rows in the operand
+     * @param positive-int $columns Number of columns in the operand
      *
-     * @return non-empty-list<non-empty-list<int|float>> Exponentiated cells
+     * @return CData Freshly allocated `double[rows * columns]` holding the exponentiated cells
      */
-    public function powByScalar(array $matrix, int|float $value, int $rows, int $columns): array;
+    public function powByScalar(CData $matrix, float $value, int $rows, int $columns): CData;
 }

@@ -24,4 +24,4 @@ var_dump(Backends::active());
 ?>
 --EXPECTF--
 Unknown matrix backend "quantum", registered ones are: %s
-string(4) "auto"
+enum(Lisachenko\NativePhpMatrix\Backend\Driver::Auto)

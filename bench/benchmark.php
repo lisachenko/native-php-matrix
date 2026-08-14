@@ -15,6 +15,7 @@ namespace Lisachenko\NativePhpMatrix\Bench;
 use InvalidArgumentException;
 use Lisachenko\NativePhpMatrix\Backend\BackendNotAvailableException;
 use Lisachenko\NativePhpMatrix\Backend\Backends;
+use Lisachenko\NativePhpMatrix\Backend\Driver;
 use Lisachenko\NativePhpMatrix\Matrix;
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -41,7 +42,7 @@ final class Benchmark
      *
      * @var list<string>
      */
-    private const array DEFAULT_BACKENDS = [Backends::PHP, Backends::BLAS, Backends::CLBLAST];
+    private const array DEFAULT_BACKENDS = [Driver::Php->value, Driver::Blas->value, Driver::Clblast->value];
 
     /**
      * Operations measured when --ops is not given
@@ -166,7 +167,7 @@ final class Benchmark
             }
         }
 
-        Backends::use(Backends::AUTO);
+        Backends::use(Driver::Auto);
 
         if ($this->markdown) {
             $this->printMarkdown($measurements, $available);
@@ -205,8 +206,8 @@ final class Benchmark
      * Performs one operation
      *
      * @param string                $operation Operation name
-     * @param Matrix<int|float>     $left      Left operand
-     * @param Matrix<int|float>     $right     Right operand
+     * @param Matrix $left  Left operand
+     * @param Matrix $right Right operand
      */
     private function execute(string $operation, Matrix $left, Matrix $right): void
     {
@@ -223,7 +224,7 @@ final class Benchmark
      *
      * @param positive-int $size Square matrix dimension
      *
-     * @return Matrix<float>
+     * @return Matrix
      */
     private function randomMatrix(int $size): Matrix
     {
@@ -295,7 +296,7 @@ final class Benchmark
         foreach ($available as $backend) {
             $header[] = '`' . $backend . '`';
         }
-        if (in_array(Backends::PHP, $available, true)) {
+        if (in_array(Driver::Php->value, $available, true)) {
             foreach (array_slice($available, 1) as $backend) {
                 $header[] = '`' . $backend . '` speed-up';
             }
@@ -319,7 +320,7 @@ final class Benchmark
                                 : '');
                 }
 
-                $reference = $cell[Backends::PHP] ?? null;
+                $reference = $cell[Driver::Php->value] ?? null;
                 if ($reference !== null) {
                     foreach (array_slice($available, 1) as $backend) {
                         $milliseconds = $cell[$backend] ?? null;

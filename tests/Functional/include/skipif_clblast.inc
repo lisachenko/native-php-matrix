@@ -11,13 +11,14 @@
 declare(strict_types=1);
 
 use Lisachenko\NativePhpMatrix\Backend\Backends;
+use Lisachenko\NativePhpMatrix\Backend\Driver;
 
 // Probing through the registry initialises OpenCL for the very device type NATIVE_PHP_MATRIX_CL_DEVICE selects and
 // runs a real kernel on it, so this skip and the test itself can never disagree. CI installs an OpenCL runtime and
 // pins the device type, so a skip there means a broken image rather than a missing GPU
 try {
     include __DIR__ . '/../../../vendor/autoload.php';
-    $isAvailable = in_array(Backends::CLBLAST, Backends::available(), true);
+    $isAvailable = in_array(Driver::Clblast->value, Backends::available(), true);
 } catch (Throwable) {
     $isAvailable = false;
 }

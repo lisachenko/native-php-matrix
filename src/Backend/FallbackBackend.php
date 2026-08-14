@@ -12,6 +12,7 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix\Backend;
 
+use FFI\CData;
 use Throwable;
 
 /**
@@ -23,9 +24,11 @@ use Throwable;
  * the failure here and recomputing with the fallback keeps the operator working: catching *inside* the hook is
  * perfectly legal, only exceptions crossing the callback boundary are fatal.
  *
+ * Recomputing is safe because a driver may not write to its operands: whatever the primary managed to do before
+ * it failed, it did to a buffer of its own, so the fallback is handed the same untouched cells.
+ *
  * This decorator is deliberately not used for an explicit selection. Asking for a specific driver and silently
- * getting another one's results — integers instead of floats, at a different speed — would hide exactly what the
- * caller wanted to control.
+ * getting another one's results, at a different speed, would hide exactly what the caller wanted to control.
  */
 final class FallbackBackend implements BackendInterface
 {
@@ -45,7 +48,7 @@ final class FallbackBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function sum(array $left, array $right, int $rows, int $columns): array
+    public function sum(CData $left, CData $right, int $rows, int $columns): CData
     {
         try {
             return $this->primary->sum($left, $right, $rows, $columns);
@@ -57,7 +60,7 @@ final class FallbackBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function subtract(array $left, array $right, int $rows, int $columns): array
+    public function subtract(CData $left, CData $right, int $rows, int $columns): CData
     {
         try {
             return $this->primary->subtract($left, $right, $rows, $columns);
@@ -69,7 +72,7 @@ final class FallbackBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function multiply(array $left, array $right, int $rows, int $inner, int $columns): array
+    public function multiply(CData $left, CData $right, int $rows, int $inner, int $columns): CData
     {
         try {
             return $this->primary->multiply($left, $right, $rows, $inner, $columns);
@@ -81,7 +84,7 @@ final class FallbackBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function multiplyByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function multiplyByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
         try {
             return $this->primary->multiplyByScalar($matrix, $value, $rows, $columns);
@@ -93,7 +96,7 @@ final class FallbackBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function divideByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function divideByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
         try {
             return $this->primary->divideByScalar($matrix, $value, $rows, $columns);
@@ -105,7 +108,7 @@ final class FallbackBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function powByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function powByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
         try {
             return $this->primary->powByScalar($matrix, $value, $rows, $columns);

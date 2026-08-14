@@ -12,15 +12,19 @@ use Lisachenko\NativePhpMatrix\Matrix;
 
 include __DIR__ . '/../../vendor/autoload.php';
 
+// The cells live in a native buffer now, so the property table shows a CData handle where it used to show an
+// array of rows. What the test is about is unchanged: the engine's own visibility markers survive the hook
 $matrix = new Matrix([[1, 2]]);
 ob_start();
 var_dump($matrix);
 $output = ob_get_clean();
-var_dump(str_contains($output, '["matrix":"Lisachenko\NativePhpMatrix\Matrix":private]'));
+var_dump(str_contains($output, '["buffer":"Lisachenko\NativePhpMatrix\Matrix":private]'));
+var_dump(str_contains($output, 'object(FFI\CData:double[2])'));
 var_dump(str_contains($output, '["rows":"Lisachenko\NativePhpMatrix\Matrix":private]'));
 var_dump(str_contains($output, '["columns":"Lisachenko\NativePhpMatrix\Matrix":private]'));
 ?>
 --EXPECT--
+bool(true)
 bool(true)
 bool(true)
 bool(true)

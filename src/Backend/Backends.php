@@ -16,7 +16,7 @@ use InvalidArgumentException;
 use Throwable;
 
 /**
- * Registry of matrix arithmetic drivers and the policy that picks one per operation
+ * Registry of matrix arithmetic drivers and the policy that picks one
  *
  * Drivers are registered under a short name with a lazy factory, so requiring this package never loads a shared
  * library. Selection happens once, in userland: either through {@see self::use()} or from the
@@ -24,12 +24,18 @@ use Throwable;
  * catchable exception, which is the entire point — an invalid selection discovered later, inside the operator
  * hooks, would surface as an engine-level fatal error instead.
  *
- * The default selection is `auto`, whose rules are deliberately boring and predictable:
+ * Built-in drivers are addressed by a {@see Driver} case, third-party ones by the string they were registered
+ * under; every method that names a driver accepts either.
  *
- * - an operand contains a float **and** an accelerated CPU driver probed successfully → that driver;
- * - anything else, including every all-integer operation → the pure-PHP driver, whose results are bit-identical
- *   to the ones this library produced before drivers existed;
- * - a GPU driver is never chosen automatically: moving data to a device is a decision, not a default.
+ * The default selection is {@see Driver::Auto}, and now that matrices are stored as native float64 buffers its
+ * rules fit in two lines:
+ *
+ * - an accelerated CPU driver probed successfully → that driver, for **every** operation. There is no longer a
+ *   marshalling cost that could make an element-wise operation cheaper in the interpreter, and no integer
+ *   semantics left to protect;
+ * - nothing available → the pure-PHP driver, which needs no library and computes the same values.
+ *
+ * A GPU driver is still never chosen automatically: moving data across a bus is a decision, not a default.
  */
 final class Backends
 {
@@ -37,26 +43,6 @@ final class Backends
      * Name of the environment variable that pins the driver for the whole process
      */
     public const string ENVIRONMENT_VARIABLE = 'NATIVE_PHP_MATRIX_BACKEND';
-
-    /**
-     * Selection that routes every operation by operand types and driver availability
-     */
-    public const string AUTO = 'auto';
-
-    /**
-     * Name of the always-available pure PHP driver
-     */
-    public const string PHP = 'php';
-
-    /**
-     * Name of the OpenBLAS CPU driver
-     */
-    public const string BLAS = 'blas';
-
-    /**
-     * Name of the CLBlast GPU driver
-     */
-    public const string CLBLAST = 'clblast';
 
     /**
      * Registered driver factories, keyed by driver name
@@ -82,27 +68,28 @@ final class Backends
     private static array $availability = [];
 
     /**
-     * Currently selected driver name, or {@see self::AUTO}
+     * Name of the currently selected driver, or the value of {@see Driver::Auto}
      */
-    private static string $selected = self::AUTO;
+    private static string $selected = Driver::Auto->value;
 
     /**
-     * Driver that automatic routing uses for operations involving floats, resolved once per process
+     * Driver that automatic routing resolved to, remembered for the process
      */
-    private static ?BackendInterface $automaticFloatBackend = null;
+    private static ?BackendInterface $automaticBackend = null;
 
     /**
      * Selects the driver to use for every following operation
      *
-     * @param string $name Driver name, or {@see self::AUTO} to restore automatic routing
+     * @param Driver|string $driver Built-in driver, a registered third-party name, or {@see Driver::Auto}
      *
-     * @throws InvalidArgumentException   When no driver is registered under that name
+     * @throws InvalidArgumentException     When no driver is registered under that name
      * @throws BackendNotAvailableException When the driver is known but unusable in this environment
      */
-    public static function use(string $name): void
+    public static function use(Driver|string $driver): void
     {
-        if ($name === self::AUTO) {
-            self::$selected = self::AUTO;
+        $name = Driver::nameOf($driver);
+        if ($name === Driver::Auto->value) {
+            self::$selected = $name;
 
             return;
         }
@@ -131,25 +118,29 @@ final class Backends
      * The factory is called at most once, and only when the driver is actually selected or probed, therefore this
      * method never throws: a driver that cannot load reports it from {@see BackendInterface::isAvailable()}.
      *
-     * @param string                     $name    Short driver name, usable in {@see self::use()} and the env variable
+     * @param Driver|string                $driver  Name usable in {@see self::use()} and in the env variable
      * @param callable(): BackendInterface $factory Lazy factory producing the driver
      */
-    public static function register(string $name, callable $factory): void
+    public static function register(Driver|string $driver, callable $factory): void
     {
+        $name             = Driver::nameOf($driver);
         $factories        = self::factories();
         $factories[$name] = $factory;
         self::$factories  = $factories;
 
         unset(self::$instances[$name], self::$availability[$name]);
-        self::$automaticFloatBackend = null;
+        self::$automaticBackend = null;
     }
 
     /**
-     * Returns the current selection: a driver name or {@see self::AUTO}
+     * Returns the current selection
+     *
+     * Built-in selections come back as the matching {@see Driver} case, a third-party one as the string it was
+     * registered under — the same shape {@see self::use()} accepts.
      */
-    public static function active(): string
+    public static function active(): Driver|string
     {
-        return self::$selected;
+        return Driver::resolveName(self::$selected);
     }
 
     /**
@@ -189,11 +180,11 @@ final class Backends
      */
     public static function reset(): void
     {
-        self::$factories             = null;
-        self::$instances             = [];
-        self::$availability          = [];
-        self::$selected              = self::AUTO;
-        self::$automaticFloatBackend = null;
+        self::$factories        = null;
+        self::$instances        = [];
+        self::$availability     = [];
+        self::$selected         = Driver::Auto->value;
+        self::$automaticBackend = null;
     }
 
     /**
@@ -212,44 +203,38 @@ final class Backends
             return;
         }
 
-        self::use(trim($name));
+        // A built-in name arrives as its case, anything else stays a string so that a driver registered by the
+        // application is just as selectable from the environment as the ones shipped here
+        self::use(Driver::resolveName(trim($name)));
     }
 
     /**
-     * Returns the driver that must carry out an operation with the given operand types
+     * Returns the driver that must carry out an operation
      *
      * This is the hot path of every overloaded operator and therefore never throws: an explicit selection was
      * validated when it was made, and automatic routing has the always-available pure-PHP driver to fall back on.
-     *
-     * @param bool $operandsContainFloats Whether any operand of the operation holds a float
      */
-    public static function resolveFor(bool $operandsContainFloats): BackendInterface
+    public static function resolve(): BackendInterface
     {
-        if (self::$selected !== self::AUTO) {
+        if (self::$selected !== Driver::Auto->value) {
             return self::instance(self::$selected);
         }
 
-        // Automatic routing never sends integers to an accelerated driver, because those compute in double
-        // precision and would turn an exact integer result into a float
-        if (!$operandsContainFloats) {
-            return self::instance(self::PHP);
-        }
-
-        return self::$automaticFloatBackend ??= self::resolveAutomaticFloatBackend();
+        return self::$automaticBackend ??= self::resolveAutomaticBackend();
     }
 
     /**
-     * Picks the driver that automatic routing uses for float operands
+     * Picks the driver automatic routing uses
      *
      * Only CPU drivers take part — sending data to a GPU is a decision, not a default — and the winner is wrapped
      * so that a hardware failure at operation time degrades into a pure-PHP recomputation instead of a fatal
      * error inside an engine hook.
      */
-    private static function resolveAutomaticFloatBackend(): BackendInterface
+    private static function resolveAutomaticBackend(): BackendInterface
     {
-        $php = self::instance(self::PHP);
-        if (self::probe(self::BLAS)) {
-            return new FallbackBackend(self::instance(self::BLAS), $php);
+        $php = self::instance(Driver::Php->value);
+        if (self::probe(Driver::Blas->value)) {
+            return new FallbackBackend(self::instance(Driver::Blas->value), $php);
         }
 
         return $php;
@@ -311,9 +296,9 @@ final class Backends
     {
         if (self::$factories === null) {
             self::$factories = [
-                self::PHP     => static fn(): BackendInterface => new PhpBackend(),
-                self::BLAS    => static fn(): BackendInterface => new BlasBackend(),
-                self::CLBLAST => static fn(): BackendInterface => new ClblastBackend(),
+                Driver::Php->value     => static fn(): BackendInterface => new PhpBackend(),
+                Driver::Blas->value    => static fn(): BackendInterface => new BlasBackend(),
+                Driver::Clblast->value => static fn(): BackendInterface => new ClblastBackend(),
             ];
         }
 

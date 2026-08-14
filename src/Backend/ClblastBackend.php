@@ -175,8 +175,14 @@ final class ClblastBackend implements BackendInterface
         }
 
         try {
-            $product         = $this->gemm([[3.0]], [[4.0]], 1, 1, 1);
-            $this->available = $product === [[12.0]];
+            $left  = Float64Buffer::allocate(1);
+            $right = Float64Buffer::allocate(1);
+
+            Float64Buffer::write($left, 0, 3.0);
+            Float64Buffer::write($right, 0, 4.0);
+
+            $product         = $this->gemm($left, $right, 1, 1, 1);
+            $this->available = Float64Buffer::read($product, 0) === 12.0;
         } catch (Throwable) {
             $this->available = false;
         }
@@ -187,23 +193,23 @@ final class ClblastBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function sum(array $left, array $right, int $rows, int $columns): array
+    public function sum(CData $left, CData $right, int $rows, int $columns): CData
     {
-        return $this->axpy($left, $right, $rows, $columns, 1.0);
+        return $this->axpy($left, $right, $rows * $columns, 1.0);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function subtract(array $left, array $right, int $rows, int $columns): array
+    public function subtract(CData $left, CData $right, int $rows, int $columns): CData
     {
-        return $this->axpy($left, $right, $rows, $columns, -1.0);
+        return $this->axpy($left, $right, $rows * $columns, -1.0);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function multiply(array $left, array $right, int $rows, int $inner, int $columns): array
+    public function multiply(CData $left, CData $right, int $rows, int $inner, int $columns): CData
     {
         return $this->gemm($left, $right, $rows, $inner, $columns);
     }
@@ -211,41 +217,45 @@ final class ClblastBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function multiplyByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function multiplyByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
-        return $this->scal($matrix, $rows, $columns, (float) $value);
+        return $this->scal($matrix, $rows * $columns, $value);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function divideByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function divideByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
         // CLBlast scales just like CBLAS does, so this is a multiplication by the reciprocal — exact for powers of
         // two, within one unit in the last place otherwise. A zero divisor raises DivisionByZeroError right here,
         // exactly as the pure-PHP driver would
-        return $this->scal($matrix, $rows, $columns, 1.0 / $value);
+        return $this->scal($matrix, $rows * $columns, 1.0 / $value);
     }
 
     /**
      * Multiplies two matrices on the device
      *
-     * @param non-empty-list<non-empty-list<int|float>> $left    Left operand cells, shaped rows × inner
-     * @param non-empty-list<non-empty-list<int|float>> $right   Right operand cells, shaped inner × columns
-     * @param positive-int                              $rows    Number of rows of the left operand
-     * @param positive-int                              $inner   Shared dimension
-     * @param positive-int                              $columns Number of columns of the right operand
+     * The operands are uploaded straight from the buffers the matrices are stored in, and the result is read back
+     * into the buffer that becomes the storage of the new matrix: the host side of this transfer costs nothing
+     * beyond the transfer itself.
      *
-     * @return non-empty-list<non-empty-list<float>> Product cells
+     * @param CData        $left    Left operand cells, row-major `double[rows * inner]`
+     * @param CData        $right   Right operand cells, row-major `double[inner * columns]`
+     * @param positive-int $rows    Number of rows of the left operand
+     * @param positive-int $inner   Shared dimension
+     * @param positive-int $columns Number of columns of the right operand
+     *
+     * @return CData Freshly allocated buffer holding the product
      */
-    private function gemm(array $left, array $right, int $rows, int $inner, int $columns): array
+    private function gemm(CData $left, CData $right, int $rows, int $inner, int $columns): CData
     {
         $library = $this->library();
         $queue   = $this->queue();
 
-        $hostA   = $this->packRowMajor($left, $rows, $inner);
-        $hostB   = $this->packRowMajor($right, $inner, $columns);
-        $hostC   = $this->allocate($rows * $columns);
+        $hostA   = $left;
+        $hostB   = $right;
+        $hostC   = Float64Buffer::allocate($rows * $columns);
         $buffers = [];
 
         try {
@@ -284,7 +294,7 @@ final class ClblastBackend implements BackendInterface
             $this->check($library->clFinish($this->commandQueue()), 'clFinish');
             $this->read($bufferC, $hostC, $rows * $columns);
 
-            return $this->unpackRows($hostC, $rows, $columns);
+            return $hostC;
         } finally {
             $this->release($buffers);
         }
@@ -293,22 +303,22 @@ final class ClblastBackend implements BackendInterface
     /**
      * Computes `left ± right` on the device over the flattened cells
      *
-     * @param non-empty-list<non-empty-list<int|float>> $left    Left operand cells
-     * @param non-empty-list<non-empty-list<int|float>> $right   Right operand cells
-     * @param positive-int                              $rows    Number of rows in both operands
-     * @param positive-int                              $columns Number of columns in both operands
-     * @param float                                     $alpha   Scale applied to the right operand: 1.0 or -1.0
+     * @param CData        $left  Left operand cells
+     * @param CData        $right Right operand cells
+     * @param positive-int $count Number of cells in both operands
+     * @param float        $alpha Scale applied to the right operand: 1.0 or -1.0
      *
-     * @return non-empty-list<non-empty-list<float>> Result cells
+     * @return CData Freshly allocated buffer holding the result
      */
-    private function axpy(array $left, array $right, int $rows, int $columns, float $alpha): array
+    private function axpy(CData $left, CData $right, int $count, float $alpha): CData
     {
         $library = $this->library();
         $queue   = $this->queue();
-        $count   = $rows * $columns;
 
-        $hostX   = $this->packRowMajor($right, $rows, $columns);
-        $hostY   = $this->packRowMajor($left, $rows, $columns);
+        // The result is read back into the host buffer that seeded Y, so Y must be a buffer this driver owns
+        // rather than the left operand the caller still holds
+        $hostX   = $right;
+        $hostY   = Float64Buffer::copyOf($left, $count);
         $buffers = [];
 
         try {
@@ -335,7 +345,7 @@ final class ClblastBackend implements BackendInterface
             $this->check($library->clFinish($this->commandQueue()), 'clFinish');
             $this->read($bufferY, $hostY, $count);
 
-            return $this->unpackRows($hostY, $rows, $columns);
+            return $hostY;
         } finally {
             $this->release($buffers);
         }
@@ -344,20 +354,19 @@ final class ClblastBackend implements BackendInterface
     /**
      * Scales every cell of a matrix on the device
      *
-     * @param non-empty-list<non-empty-list<int|float>> $matrix  Operand cells
-     * @param positive-int                              $rows    Number of rows
-     * @param positive-int                              $columns Number of columns
-     * @param float                                     $alpha   Scale factor
+     * @param CData        $matrix Operand cells
+     * @param positive-int $count  Number of cells
+     * @param float        $alpha  Scale factor
      *
-     * @return non-empty-list<non-empty-list<float>> Result cells
+     * @return CData Freshly allocated buffer holding the scaled cells
      */
-    private function scal(array $matrix, int $rows, int $columns, float $alpha): array
+    private function scal(CData $matrix, int $count, float $alpha): CData
     {
         $library = $this->library();
         $queue   = $this->queue();
-        $count   = $rows * $columns;
 
-        $host    = $this->packRowMajor($matrix, $rows, $columns);
+        // Scaling reads back into the host buffer it uploaded, so it works on a copy of the operand
+        $host    = Float64Buffer::copyOf($matrix, $count);
         $buffers = [];
 
         try {
@@ -368,7 +377,7 @@ final class ClblastBackend implements BackendInterface
             $this->check($library->clFinish($this->commandQueue()), 'clFinish');
             $this->read($buffer, $host, $count);
 
-            return $this->unpackRows($host, $rows, $columns);
+            return $host;
         } finally {
             $this->release($buffers);
         }
@@ -463,7 +472,7 @@ final class ClblastBackend implements BackendInterface
      */
     private function bytes(int $count): int
     {
-        return $count * FFI::sizeof($this->library()->new('double'));
+        return Float64Buffer::bytes($count);
     }
 
     /**

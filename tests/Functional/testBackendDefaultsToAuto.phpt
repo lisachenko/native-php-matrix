@@ -18,5 +18,5 @@ var_dump(Backends::active());
 var_dump(in_array('php', Backends::available(), true));
 ?>
 --EXPECT--
-string(4) "auto"
+enum(Lisachenko\NativePhpMatrix\Backend\Driver::Auto)
 bool(true)

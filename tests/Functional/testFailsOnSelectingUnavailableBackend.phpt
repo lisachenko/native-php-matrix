@@ -33,4 +33,4 @@ var_dump(Backends::active());
 bool(true)
 bool(false)
 Matrix backend "unavailable" is registered but not available in this environment
-string(4) "auto"
+enum(Lisachenko\NativePhpMatrix\Backend\Driver::Auto)

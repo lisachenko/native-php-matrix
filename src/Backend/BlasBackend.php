@@ -13,6 +13,7 @@ declare(strict_types=1);
 namespace Lisachenko\NativePhpMatrix\Backend;
 
 use FFI;
+use FFI\CData;
 use FFI\Exception as FFIException;
 use Throwable;
 
@@ -23,6 +24,13 @@ use Throwable;
  * `cblas_dgemm` multiplies two matrices, `cblas_daxpy` adds a scaled vector to another one — matrix addition and
  * subtraction are exactly that over the flattened cells — and `cblas_dscal` scales a vector in place. No header
  * file is involved: the declarations are inline, and the CBLAS enums travel as the plain integers they are.
+ *
+ * Nothing is marshalled. A matrix already stores its cells as the contiguous, row-major `double[]` block CBLAS
+ * wants, so an operand is handed to the kernel as the pointer it already is, and the buffer the kernel writes
+ * becomes the storage of the resulting matrix. The only copy left is the one the accumulating kernels force:
+ * `daxpy` and `dscal` write into an operand, so the operand is `memcpy`-ed into the result buffer first and the
+ * kernel is pointed at the copy — one bulk copy per operation instead of a cell-by-cell conversion of both
+ * operands on the way in and of the result on the way out.
  *
  * The library is loaded lazily, and only ever the LP64 build. An ILP64 one — `libopenblas64*`, where the integer
  * arguments are 64 bit wide — must never be probed here: its ABI does not match these declarations and the
@@ -93,28 +101,14 @@ final class BlasBackend implements BackendInterface
         }
 
         try {
-            $library = $this->library();
-            $left    = $this->packRowMajor([[3.0]], 1, 1);
-            $right   = $this->packRowMajor([[4.0]], 1, 1);
-            $product = $this->allocate(1);
-            $library->cblas_dgemm(
-                self::CBLAS_ROW_MAJOR,
-                self::CBLAS_NO_TRANS,
-                self::CBLAS_NO_TRANS,
-                1,
-                1,
-                1,
-                1.0,
-                $left,
-                1,
-                $right,
-                1,
-                0.0,
-                $product,
-                1,
-            );
+            $left  = Float64Buffer::allocate(1);
+            $right = Float64Buffer::allocate(1);
 
-            $this->available = $product[0] === 12.0;
+            Float64Buffer::write($left, 0, 3.0);
+            Float64Buffer::write($right, 0, 4.0);
+
+            $product         = $this->multiply($left, $right, 1, 1, 1);
+            $this->available = Float64Buffer::read($product, 0) === 12.0;
         } catch (Throwable) {
             $this->available = false;
         }
@@ -125,30 +119,29 @@ final class BlasBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function sum(array $left, array $right, int $rows, int $columns): array
+    public function sum(CData $left, CData $right, int $rows, int $columns): CData
     {
-        return $this->axpy($left, $right, $rows, $columns, 1.0);
+        return $this->axpy($left, $right, $rows * $columns, 1.0);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function subtract(array $left, array $right, int $rows, int $columns): array
+    public function subtract(CData $left, CData $right, int $rows, int $columns): CData
     {
-        return $this->axpy($left, $right, $rows, $columns, -1.0);
+        return $this->axpy($left, $right, $rows * $columns, -1.0);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function multiply(array $left, array $right, int $rows, int $inner, int $columns): array
+    public function multiply(CData $left, CData $right, int $rows, int $inner, int $columns): CData
     {
-        $a       = $this->packRowMajor($left, $rows, $inner);
-        $b       = $this->packRowMajor($right, $inner, $columns);
-        $product = $this->allocate($rows * $columns);
+        $product = Float64Buffer::allocate($rows * $columns);
 
         // beta = 0.0 is specified to ignore the previous contents of C instead of scaling them, so the product
-        // buffer needs no initialisation — and FFI::new() hands out zero-filled memory anyway
+        // buffer needs no initialisation — and FFI::new() hands out zero-filled memory anyway. Both operands are
+        // passed straight through: they are already the row-major doubles dgemm expects
         $this->library()->cblas_dgemm(
             self::CBLAS_ROW_MAJOR,
             self::CBLAS_NO_TRANS,
@@ -157,76 +150,73 @@ final class BlasBackend implements BackendInterface
             $columns,
             $inner,
             1.0,
-            $a,
+            $left,
             $inner,
-            $b,
+            $right,
             $columns,
             0.0,
             $product,
             $columns,
         );
 
-        return $this->unpackRows($product, $rows, $columns);
+        return $product;
     }
 
     /**
      * {@inheritDoc}
      */
-    public function multiplyByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function multiplyByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
-        return $this->scal($matrix, $rows, $columns, (float) $value);
+        return $this->scal($matrix, $rows * $columns, $value);
     }
 
     /**
      * {@inheritDoc}
      */
-    public function divideByScalar(array $matrix, int|float $value, int $rows, int $columns): array
+    public function divideByScalar(CData $matrix, float $value, int $rows, int $columns): CData
     {
         // BLAS scales, it does not divide. Multiplying by the reciprocal is exact for powers of two and within one
-        // unit in the last place otherwise — the price of this driver, alongside the cast of every cell to double.
-        // Dividing by zero raises the very same DivisionByZeroError the pure-PHP driver raises
-        return $this->scal($matrix, $rows, $columns, 1.0 / $value);
+        // unit in the last place otherwise — the price of this driver. Dividing by zero raises the very same
+        // DivisionByZeroError the pure-PHP driver raises
+        return $this->scal($matrix, $rows * $columns, 1.0 / $value);
     }
 
     /**
-     * Computes `left ± right` by flattening both operands into vectors
+     * Computes `left ± right` over the flattened cells of both operands
      *
-     * @param non-empty-list<non-empty-list<int|float>> $left    Left operand cells
-     * @param non-empty-list<non-empty-list<int|float>> $right   Right operand cells
-     * @param positive-int                              $rows    Number of rows in both operands
-     * @param positive-int                              $columns Number of columns in both operands
-     * @param float                                     $alpha   Scale applied to the right operand: 1.0 or -1.0
+     * @param CData        $left  Left operand cells
+     * @param CData        $right Right operand cells
+     * @param positive-int $count Number of cells in both operands
+     * @param float        $alpha Scale applied to the right operand: 1.0 or -1.0
      *
-     * @return non-empty-list<non-empty-list<float>> Result cells
+     * @return CData Freshly allocated buffer holding the result
      */
-    private function axpy(array $left, array $right, int $rows, int $columns, float $alpha): array
+    private function axpy(CData $left, CData $right, int $count, float $alpha): CData
     {
-        $count  = $rows * $columns;
-        $vector = $this->packRowMajor($right, $rows, $columns);
-        $result = $this->packRowMajor($left, $rows, $columns);
+        // daxpy accumulates into its second vector, which must therefore be a buffer this driver owns: the left
+        // operand is copied once and the kernel adds the untouched right operand into the copy
+        $result = Float64Buffer::copyOf($left, $count);
+        $this->library()->cblas_daxpy($count, $alpha, $right, 1, $result, 1);
 
-        // daxpy accumulates into its second vector: result = alpha * right + left
-        $this->library()->cblas_daxpy($count, $alpha, $vector, 1, $result, 1);
-
-        return $this->unpackRows($result, $rows, $columns);
+        return $result;
     }
 
     /**
      * Scales every cell of a matrix by a factor
      *
-     * @param non-empty-list<non-empty-list<int|float>> $matrix  Operand cells
-     * @param positive-int                              $rows    Number of rows
-     * @param positive-int                              $columns Number of columns
-     * @param float                                     $alpha   Scale factor
+     * @param CData        $matrix Operand cells
+     * @param positive-int $count  Number of cells
+     * @param float        $alpha  Scale factor
      *
-     * @return non-empty-list<non-empty-list<float>> Result cells
+     * @return CData Freshly allocated buffer holding the scaled cells
      */
-    private function scal(array $matrix, int $rows, int $columns, float $alpha): array
+    private function scal(CData $matrix, int $count, float $alpha): CData
     {
-        $result = $this->packRowMajor($matrix, $rows, $columns);
-        $this->library()->cblas_dscal($rows * $columns, $alpha, $result, 1);
+        // dscal scales in place, so it is pointed at a copy rather than at the operand the caller still holds
+        $result = Float64Buffer::copyOf($matrix, $count);
+        $this->library()->cblas_dscal($count, $alpha, $result, 1);
 
-        return $this->unpackRows($result, $rows, $columns);
+        return $result;
     }
 
     /**

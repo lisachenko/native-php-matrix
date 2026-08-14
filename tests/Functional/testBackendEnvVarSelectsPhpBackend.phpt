@@ -22,7 +22,7 @@ $matrixB = new Matrix([[0.5, 0.5]]);
 var_dump(($matrixA + $matrixB)->toArray());
 ?>
 --EXPECT--
-string(3) "php"
+enum(Lisachenko\NativePhpMatrix\Backend\Driver::Php)
 array(1) {
   [0]=>
   array(2) {
