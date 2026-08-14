@@ -72,13 +72,22 @@ php -d ffi.enable=1 -d opcache.jit=off vendor/bin/phpunit tests/Functional/testC
 composer phpstan     # PHPStan at level max
 composer cs:check    # coding standards, PER-CS2.0
 composer cs:fix      # apply the fixes
+composer bench       # not a gate: compares the drivers, see bench/benchmark.php
 ```
 
-`Matrix` is declared `@template-covariant T of int|float`. **Keep the generics
-honest.** Arithmetic widens: dividing or exponentiating a `Matrix<int>` can produce
-floats, so those results are `Matrix<int|float>`, never `Matrix<T>`. Do not annotate
-a method as preserving `T` to make PHPStan quiet — if the maths does not preserve
-the type, the signature must not claim it does.
+PHPStan analyses `src`, `bench` and `bootstrap.php`. The only ignored errors are the
+FFI ones — methods that exist solely after `FFI::cdef()` has parsed the inline C, the
+pseudo-property on scalar handles, index access on `FFI\CData`, and the operators of
+the benchmark, which no analyser can know the engine dispatches. Each entry in
+`phpstan.dist.neon` is scoped to a path, carries an identifier and a comment; there is
+no baseline. Keep it that way — new ignores need the same justification.
+
+`Matrix` carries **no generic parameter**. Cells are float64 and nothing else, so
+there is no `T` to preserve or widen and `toArray()` returns
+`non-empty-list<non-empty-list<float>>` unconditionally. Do not reintroduce
+`Matrix<int>`: an integer literal in the constructor is input syntax, not a cell
+type, and a signature promising integers back would be a lie the storage cannot
+keep.
 
 ## Anatomy of a `.phpt` test
 
@@ -131,22 +140,120 @@ Rules for a new test:
 - One behaviour per file. Failure cases (incompatible dimensions, unsupported
   operator combinations) get their own files.
 
+### Backend tests
+
+- Pin the driver with an `--ENV--` section (`NATIVE_PHP_MATRIX_BACKEND=blas`), which
+  is merged into the child's environment, not substituted for it — the CI-wide
+  `NATIVE_PHP_MATRIX_CL_DEVICE` still reaches the test.
+- Guard a driver-specific test with the shared probe:
+  `--SKIPIF--` including `include/skipif_blas.inc` or `include/skipif_clblast.inc`.
+  Those ask `Backends::available()`, which loads the library and runs a real
+  operation, so a skip can never disagree with the test. PHPUnit prints the skip
+  message minus two characters, hence the `skip - ` prefix.
+- `.inc` files under `tests/Functional/include/` hold the shared probes and the
+  backend stubs. The suite collects `.phpt` only, so they are never run as tests, but
+  php-cs-fixer does check them.
+- Use **integral-valued float fixtures and small dimensions**. Every partial sum then
+  stays exactly representable in double precision, so a driver that accumulates in a
+  different order still has to produce an identical result — which is what the
+  `*MatchesPhpBackendResults` tests assert. For division, use power-of-two divisors:
+  BLAS scales by the reciprocal, and only then is `x * (1/s)` exactly `x / s`.
+- **Every cell expectation is a float.** `var_dump()` of a result prints `float(5)`,
+  never `int(5)`, whichever driver computed it. A test asserting `int(...)` for a
+  matrix cell is wrong by construction.
+- **The suite must pass under every pinned backend.** Running it with
+  `NATIVE_PHP_MATRIX_BACKEND=php`, `=blas` or `=clblast` has to be as green as the
+  default run — that is the point of having one cell type, and it is why the
+  `gpu-path` CI job runs `composer test` outright instead of naming the CLBlast test
+  files. If pinning a backend breaks a test, the test encodes a driver-specific
+  assumption and needs fixing, not an exclusion.
+- **A test's expectation may never depend on the ambient environment.** A `.phpt`
+  file that asserts the *default* selection pins `NATIVE_PHP_MATRIX_BACKEND=` (empty,
+  which means "unset") in its `--ENV--`, so it keeps asserting the default even when
+  the whole suite is run with a backend pinned.
+- `failOnSkipped="true"` is set, so a skip fails the suite. That is deliberate: CI
+  installs every acceleration library, so a skip there means a broken image. Locally,
+  without the libraries, run
+  `php -d ffi.enable=1 -d opcache.jit=off vendor/bin/phpunit --do-not-fail-on-skipped`.
+
+The acceleration libraries CI installs, and what a local machine needs for the full
+suite:
+
+```bash
+sudo apt-get install -y libopenblas0 libclblast1 ocl-icd-libopencl1 pocl-opencl-icd
+```
+
+PoCL provides an OpenCL device on the CPU, which is how the GPU code path is covered
+on runners that have no GPU; the `gpu-path` job pins
+`NATIVE_PHP_MATRIX_BACKEND=clblast` and `NATIVE_PHP_MATRIX_CL_DEVICE=cpu`.
+
 ## Repository map
 
 ```
-src/Matrix.php            the entire library: the maths plus the __doOperation/__compare hooks
-bootstrap.php             Core::init() then installExtensionHandlers() on Matrix — order matters;
-                          runs automatically via Composer's "files" autoload
-tests/Functional/*.phpt   the functional suite, one behaviour per file
-phpunit.xml.dist          PHPUnit 12 config (suite points at tests/, suffix .phpt)
-phpstan.dist.neon         static analysis config, level max
-.php-cs-fixer.dist.php    coding standards config (PER-CS2.0)
-.github/workflows/ci.yml  jobs: tests, static-analysis, coding-standards — PHP 8.4 and 8.5
+src/Matrix.php               the float64 buffer, validation, dimensions, the __doOperation/__compare hooks;
+                             the arithmetic itself is delegated to a backend driver
+src/Backend/                 the interchangeable drivers and the registry that picks one
+tests/Functional/*.phpt      the functional suite, one behaviour per file
+tests/Functional/include/    shared SKIPIF probes and backend stubs (.inc — never collected as tests)
+bench/benchmark.php          driver comparison CLI, "composer bench"
+bootstrap.php                Core::init(), installExtensionHandlers() on Matrix, then
+                             Backends::bootFromEnvironment() — order matters; runs automatically via
+                             Composer's "files" autoload
+phpunit.xml.dist             PHPUnit 12 config (suite points at tests/, suffix .phpt)
+phpstan.dist.neon            static analysis config, level max
+.php-cs-fixer.dist.php       coding standards config (PER-CS2.0)
+.github/workflows/ci.yml     jobs: tests, gpu-path, static-analysis, coding-standards — PHP 8.4 and 8.5
+.github/dependabot.yml       composer daily, github-actions weekly
 ```
 
-`src/Matrix.php` is the whole library. There is no framework here to hide behind: a
-change to a hook signature or to `bootstrap.php`'s ordering affects every operator
-at once.
+`src/Matrix.php` is still the centre of the library. There is no framework here to
+hide behind: a change to a hook signature or to `bootstrap.php`'s ordering affects
+every operator at once.
+
+## Backend architecture
+
+`Matrix` no longer does the arithmetic itself. It validates, checks dimensions, and
+asks `Backends::resolve()` which driver should compute — drivers receive the operand
+**buffers** with the dimensions alongside them and return a freshly allocated buffer.
+
+```
+src/Backend/BackendInterface.php             the driver contract: six operations, plus isAvailable()
+src/Backend/Backends.php                     registry, selection and the auto-routing policy
+src/Backend/Driver.php                       string-backed enum naming the built-in drivers plus "auto"
+src/Backend/Float64Buffer.php                allocate / copy / compare the double[] blocks everything speaks
+src/Backend/PhpBackend.php                   the interpreted loops, now over buffer offsets
+src/Backend/BlasBackend.php                  OpenBLAS over FFI (CPU), called on the stored buffers
+src/Backend/ClblastBackend.php               CLBlast over OpenCL (GPU, or CPU via PoCL)
+src/Backend/AcceleratedBackendTrait.php      the pow loop, the one operation no BLAS provides
+src/Backend/FallbackBackend.php              decorator: degrade to another driver instead of failing
+src/Backend/BackendNotAvailableException.php catchable, thrown at selection time only
+```
+
+Four rules govern this part of the codebase, and none of them is negotiable:
+
+- **Hook safety.** Anything reachable from an operation runs inside an FFI callback,
+  where a thrown exception becomes `Fatal error: Throwing from FFI callbacks is not
+  allowed`. Drivers therefore report their unusability from `isAvailable()`, which
+  swallows its own failures, and selection is validated eagerly in userland —
+  `Backends::use()` and `bootFromEnvironment()`. Under `auto`, a driver that fails at
+  operation time is caught by `FallbackBackend` and the result is recomputed in pure
+  PHP. Catching *inside* a hook is fine; only crossing the boundary is fatal.
+- **Everything is float64.** A matrix stores `double` cells, every driver reads and
+  writes `double` cells. There is no integer path to preserve and no cast to make:
+  the constructor is the only place a value changes type, and it does so by writing
+  an int into a double slot, which FFI converts natively. Never add a userland cast
+  loop — that is exactly what the buffers exist to eliminate.
+- **Operands are read-only, results are fresh.** The buffers a driver receives are
+  the storage of matrices the caller still holds. A kernel that accumulates into an
+  argument (`daxpy`, `dscal`) must copy it into the result buffer first, with
+  `Float64Buffer::copyOf()`. Never return an operand as the result. This is also what
+  makes `FallbackBackend`'s recomputation safe.
+- **Auto-routing uses BLAS for everything, never a GPU.** `auto` picks the OpenBLAS
+  driver whenever it probes available, for every operation including element-wise
+  ones, and the pure-PHP driver otherwise. A GPU is never chosen automatically.
+
+An availability probe performs a real 1×1 operation, so it cannot disagree with what
+an operation would do a moment later. Probes are cached per process.
 
 ## Hook contracts
 
@@ -177,16 +284,24 @@ at once.
 
 ```
 feat(matrix): support element-wise exponentiation by scalar
+feat(backend): add OpenBLAS driver with dgemm/daxpy/dscal over FFI
 fix(bootstrap): install create_object handler before do_operation
 test(tests): cover division by zero
 ci: run the suite on PHP 8.4 and 8.5 with ffi.enable=1
 docs: rewrite the README in the z-engine style
 ```
 
-Scopes in use: `matrix`, `bootstrap`, `tests`, `ci`, `docs`.
+Scopes in use: `matrix`, `backend`, `bootstrap`, `tests`, `ci`, `docs`.
 
 Code style is **PER-CS2.0**, applied by php-cs-fixer. Run `composer cs:fix` before
 proposing a change rather than hand-formatting.
+
+**Global functions and constants are never imported.** Call `count()`, `sprintf()`,
+`is_int()` and friends unqualified, and write `PHP_EOL` or `ARRAY_FILTER_USE_KEY`
+as they are — no `use function` or `use const` lines anywhere. Only classes,
+interfaces, traits and enums get a `use` statement. The import lists were pure
+noise, and the fixer neither adds nor removes these imports, so the convention is
+stable under `composer cs:fix`.
 
 ## Dependency policy
 
@@ -200,3 +315,9 @@ proposing a change rather than hand-formatting.
   for it, and never one without the other.
 - When z-engine ships stable releases for the supported minors, the constraint and
   the root stability flags should be tightened in a single change.
+- **System libraries are never Composer requirements.** OpenBLAS, CLBlast and an
+  OpenCL runtime are optional, discovered at runtime by the drivers that need them,
+  and listed under `suggest`. The package must install and its suite must pass — with
+  `--do-not-fail-on-skipped` — on a machine that has none of them; the pure-PHP driver
+  is always available. Add a new accelerated driver the same way: lazy load, probe,
+  degrade.

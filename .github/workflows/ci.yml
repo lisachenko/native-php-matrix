@@ -20,8 +20,18 @@ jobs:
       fail-fast: false
       matrix:
         php: ['8.4', '8.5']
+    # The suite fails on skipped tests, so every acceleration library is installed here: a skipped backend test
+    # means a broken environment rather than an absent GPU. PoCL provides the OpenCL device, on the CPU
+    env:
+      NATIVE_PHP_MATRIX_CL_DEVICE: cpu
     steps:
       - uses: actions/checkout@v7
+
+      - name: Install acceleration libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libopenblas0 libclblast1 ocl-icd-libopencl1 pocl-opencl-icd
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -35,6 +45,49 @@ jobs:
         uses: ramsey/composer-install@v4
 
       - name: Run test suite
+        run: composer test
+
+      # Backend-pinned tests carry their own --ENV--, which overrides this one: what the second run really covers
+      # is every other test computing on the pure-PHP driver, with automatic routing switched off
+      - name: Run test suite on the pure PHP backend
+        run: composer test
+        env:
+          NATIVE_PHP_MATRIX_BACKEND: php
+
+  gpu-path:
+    name: GPU code path (CLBlast on PoCL, PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
+    # The device code path gets its own red/green signal, on the CPU device PoCL provides, so a broken GPU driver
+    # is visible without reading through the rest of the suite. Now that matrix cells are float64 whichever driver
+    # computes them, pinning an accelerated backend no longer changes any expectation, so this job runs the entire
+    # suite on the device instead of only the driver's own tests
+    env:
+      NATIVE_PHP_MATRIX_BACKEND: clblast
+      NATIVE_PHP_MATRIX_CL_DEVICE: cpu
+      OPENBLAS_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install acceleration libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libopenblas0 libclblast1 ocl-icd-libopencl1 pocl-opencl-icd
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: ffi
+          ini-values: ffi.enable=1, zend.assertions=1, opcache.jit=off
+          coverage: none
+
+      - uses: ramsey/composer-install@v4
+
+      - name: Run test suite on the clblast backend
         run: composer test
 
   static-analysis:

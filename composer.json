@@ -2,7 +2,12 @@
     "name": "lisachenko/native-php-matrix",
     "description": "PHP extension that provides Matrix class powered with overloaded operators",
     "type": "library",
-    "keywords": ["ffi", "matrix", "operator-overloading", "z-engine"],
+    "keywords": [
+        "ffi",
+        "matrix",
+        "operator-overloading",
+        "z-engine"
+    ],
     "license": "MIT",
     "authors": [
         {
@@ -22,20 +27,28 @@
         "phpstan/phpstan": "^2.1",
         "phpunit/phpunit": "^12.5"
     },
+    "suggest": {
+        "lib-openblas": "Install the OpenBLAS shared library (Debian/Ubuntu: libopenblas0, Homebrew: openblas) to enable the CPU-accelerated \"blas\" backend",
+        "lib-clblast": "Install CLBlast and an OpenCL runtime (Debian/Ubuntu: libclblast1, ocl-icd-libopencl1 plus a vendor ICD or pocl-opencl-icd) to enable the GPU-accelerated \"clblast\" backend"
+    },
     "autoload": {
         "psr-4": {
             "Lisachenko\\NativePhpMatrix\\": "src/"
         },
-        "files": ["bootstrap.php"]
+        "files": [
+            "bootstrap.php"
+        ]
     },
     "scripts": {
         "test": "phpunit",
+        "bench": "php bench/benchmark.php",
         "phpstan": "phpstan analyse",
         "cs:check": "php-cs-fixer fix --dry-run --diff",
         "cs:fix": "php-cs-fixer fix"
     },
     "scripts-descriptions": {
         "test": "Run the test suite",
+        "bench": "Compare the matrix backends on the operations of a neural network layer",
         "phpstan": "Run static analysis at the maximum level",
         "cs:check": "Check coding standards without fixing",
         "cs:fix": "Fix coding standards"

@@ -20,19 +20,19 @@ array(2) {
   [0]=>
   array(3) {
     [0]=>
-    int(1)
+    float(1)
     [1]=>
-    int(2)
+    float(2)
     [2]=>
-    int(3)
+    float(3)
   }
   [1]=>
   array(3) {
     [0]=>
-    int(4)
+    float(4)
     [1]=>
-    int(5)
+    float(5)
     [2]=>
-    int(6)
+    float(6)
   }
 }

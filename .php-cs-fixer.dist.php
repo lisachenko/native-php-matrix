@@ -12,9 +12,16 @@ with this source code in the file LICENSE.
 HEADER;
 
 $finder = PhpCsFixer\Finder::create()
-    ->in([__DIR__ . '/src'])
+    ->in([__DIR__ . '/src', __DIR__ . '/bench'])
     ->name('*.php')
-    ->append([__FILE__, __DIR__ . '/bootstrap.php']);
+    ->append([__FILE__, __DIR__ . '/bootstrap.php'])
+    // Test fixtures are ordinary PHP holding the shared backend stubs and SKIPIF probes; the ".inc" suffix only
+    // keeps them out of the PHPUnit suite, which collects ".phpt" files
+    ->append(
+        PhpCsFixer\Finder::create()
+            ->in([__DIR__ . '/tests/Functional/include'])
+            ->name('*.inc'),
+    );
 
 return (new PhpCsFixer\Config())
     ->setRiskyAllowed(true)

@@ -10,6 +10,7 @@
  */
 declare(strict_types=1);
 
+use Lisachenko\NativePhpMatrix\Backend\Backends;
 use Lisachenko\NativePhpMatrix\Matrix;
 use ZEngine\Core;
 use ZEngine\Reflection\ReflectionClass as ReflectionClassEx;
@@ -24,3 +25,8 @@ if (!isset(Core::$executor)) {
 // Activate extensions for the Matrix class as it provides
 $matrixClassReflection = new ReflectionClassEx(Matrix::class);
 $matrixClassReflection->installExtensionHandlers();
+
+// Apply the backend pinned by the environment, if any. This runs here, in plain userland code, precisely because
+// it can fail: an unknown or unusable driver name throws a catchable exception now instead of surfacing as an
+// engine-level fatal error later, from inside the operator hooks where exceptions may not cross the FFI boundary
+Backends::bootFromEnvironment();

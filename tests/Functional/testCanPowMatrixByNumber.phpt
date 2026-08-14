@@ -21,10 +21,10 @@ array(1) {
   [0]=>
   array(3) {
     [0]=>
-    int(1)
+    float(1)
     [1]=>
-    int(4)
+    float(4)
     [2]=>
-    int(9)
+    float(9)
   }
 }

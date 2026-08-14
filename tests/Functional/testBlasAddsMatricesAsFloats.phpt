@@ -1,0 +1,38 @@
+--TEST--
+The blas backend adds matrices and returns floats even for integer input
+--INI--
+ffi.enable=1
+opcache.jit=off
+error_reporting=E_ALL & ~E_DEPRECATED
+--ENV--
+NATIVE_PHP_MATRIX_BACKEND=blas
+--SKIPIF--
+<?php
+include __DIR__ . '/include/skipif_blas.inc';
+?>
+--FILE--
+<?php
+declare(strict_types=1);
+
+use Lisachenko\NativePhpMatrix\Matrix;
+
+include __DIR__ . '/../../vendor/autoload.php';
+
+// An explicitly selected accelerated driver computes in double precision, so integer cells come back as floats.
+// That is the documented price of asking for it by name; automatic routing would have kept these on pure PHP
+$matrixA = new Matrix([[1, 2, 3]]);
+$matrixB = new Matrix([[4, 5, 6]]);
+var_dump(($matrixA + $matrixB)->toArray());
+?>
+--EXPECT--
+array(1) {
+  [0]=>
+  array(3) {
+    [0]=>
+    float(5)
+    [1]=>
+    float(7)
+    [2]=>
+    float(9)
+  }
+}

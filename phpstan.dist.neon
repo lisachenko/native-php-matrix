@@ -3,5 +3,65 @@ parameters:
     phpVersion: 80400
     paths:
         - src
+        - bench
         - bootstrap.php
     treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        # FFI buffers are indexable at runtime — that is the whole point of a "double[n]" allocation — but PHPStan
+        # models FFI\CData as a plain object with neither ArrayAccess nor a known cell type. Reading a cell is
+        # therefore "mixed" to it, writing one degrades the variable to "mixed" as well, and any arithmetic on a
+        # cell inherits that "mixed". Every entry below is one of those three shapes, confined to the files that
+        # walk raw memory: the cell loops of the drivers, the storage of Matrix and the buffer helper itself
+        -
+            identifier: offsetAccess.nonOffsetAccessible
+            path: src/Backend/AcceleratedBackendTrait.php
+        -
+            identifier: return.type
+            path: src/Backend/AcceleratedBackendTrait.php
+        -
+            identifier: binaryOp.invalid
+            path: src/Backend/AcceleratedBackendTrait.php
+        # The pure-PHP driver is nothing but those loops now that cells live in a buffer rather than in arrays
+        -
+            identifier: offsetAccess.nonOffsetAccessible
+            path: src/Backend/PhpBackend.php
+        -
+            identifier: return.type
+            path: src/Backend/PhpBackend.php
+        -
+            identifier: binaryOp.invalid
+            path: src/Backend/PhpBackend.php
+        # Matrix writes its cells into the buffer as it validates them, and reads them back in toArray()
+        -
+            identifier: offsetAccess.nonOffsetAccessible
+            path: src/Matrix.php
+        -
+            identifier: assign.propertyType
+            path: src/Matrix.php
+        # FFI::new() is callable statically, although the stubs declare it as an instance method, and the single
+        # cell accessors of the buffer helper index a CData like the C array it is
+        -
+            identifier: method.staticCall
+            path: src/Backend/Float64Buffer.php
+        -
+            identifier: return.type
+            path: src/Backend/Float64Buffer.php
+        # The cblas_* methods exist only after FFI::cdef() has parsed the inline C declarations of this driver, so
+        # no static analysis can see them on the FFI instance
+        -
+            identifier: method.notFound
+            path: src/Backend/BlasBackend.php
+        # Same for the OpenCL and CLBlast entry points of the GPU driver, plus the pseudo-property FFI exposes on
+        # scalar handles: both exist only once the C declarations have been parsed at runtime
+        -
+            identifier: method.notFound
+            path: src/Backend/ClblastBackend.php
+        -
+            identifier: property.notFound
+            path: src/Backend/ClblastBackend.php
+        # The whole point of this package is that the engine dispatches "*" and "+" on a Matrix through handlers
+        # installed at runtime. No static analyser can know that, so the benchmark — the only place that uses the
+        # operators rather than the methods behind them — reports them as invalid operations
+        -
+            identifier: binaryOp.invalid
+            path: bench/benchmark.php
