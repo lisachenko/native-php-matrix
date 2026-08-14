@@ -82,11 +82,12 @@ the benchmark, which no analyser can know the engine dispatches. Each entry in
 `phpstan.dist.neon` is scoped to a path, carries an identifier and a comment; there is
 no baseline. Keep it that way — new ignores need the same justification.
 
-`Matrix` is declared `@template-covariant T of int|float`. **Keep the generics
-honest.** Arithmetic widens: dividing or exponentiating a `Matrix<int>` can produce
-floats, so those results are `Matrix<int|float>`, never `Matrix<T>`. Do not annotate
-a method as preserving `T` to make PHPStan quiet — if the maths does not preserve
-the type, the signature must not claim it does.
+`Matrix` carries **no generic parameter**. Cells are float64 and nothing else, so
+there is no `T` to preserve or widen and `toArray()` returns
+`non-empty-list<non-empty-list<float>>` unconditionally. Do not reintroduce
+`Matrix<int>`: an integer literal in the constructor is input syntax, not a cell
+type, and a signature promising integers back would be a lie the storage cannot
+keep.
 
 ## Anatomy of a `.phpt` test
 
@@ -157,15 +158,19 @@ Rules for a new test:
   different order still has to produce an identical result — which is what the
   `*MatchesPhpBackendResults` tests assert. For division, use power-of-two divisors:
   BLAS scales by the reciprocal, and only then is `x * (1/s)` exactly `x / s`.
+- **Every cell expectation is a float.** `var_dump()` of a result prints `float(5)`,
+  never `int(5)`, whichever driver computed it. A test asserting `int(...)` for a
+  matrix cell is wrong by construction.
+- **The suite must pass under every pinned backend.** Running it with
+  `NATIVE_PHP_MATRIX_BACKEND=php`, `=blas` or `=clblast` has to be as green as the
+  default run — that is the point of having one cell type, and it is why the
+  `gpu-path` CI job runs `composer test` outright instead of naming the CLBlast test
+  files. If pinning a backend breaks a test, the test encodes a driver-specific
+  assumption and needs fixing, not an exclusion.
 - **A test's expectation may never depend on the ambient environment.** A `.phpt`
   file that asserts the *default* selection pins `NATIVE_PHP_MATRIX_BACKEND=` (empty,
   which means "unset") in its `--ENV--`, so it keeps asserting the default even when
-  the whole suite is run with a backend pinned. Conversely, the classic operator tests
-  deliberately keep asserting integer results under the default routing: running the
-  entire suite with `NATIVE_PHP_MATRIX_BACKEND=blas` or `=clblast` makes them fail,
-  and that is the float-only rule working as documented, not a regression. Those two
-  drivers are exercised by their own pinned tests, which is also why the `gpu-path` CI
-  job names the CLBlast test files instead of running everything.
+  the whole suite is run with a backend pinned.
 - `failOnSkipped="true"` is set, so a skip fails the suite. That is deliberate: CI
   installs every acceleration library, so a skip there means a broken image. Locally,
   without the libraries, run
@@ -185,8 +190,8 @@ on runners that have no GPU; the `gpu-path` job pins
 ## Repository map
 
 ```
-src/Matrix.php               validation, dimensions, the __doOperation/__compare hooks; the arithmetic
-                             itself is delegated to a backend driver
+src/Matrix.php               the float64 buffer, validation, dimensions, the __doOperation/__compare hooks;
+                             the arithmetic itself is delegated to a backend driver
 src/Backend/                 the interchangeable drivers and the registry that picks one
 tests/Functional/*.phpt      the functional suite, one behaviour per file
 tests/Functional/include/    shared SKIPIF probes and backend stubs (.inc — never collected as tests)
@@ -198,6 +203,7 @@ phpunit.xml.dist             PHPUnit 12 config (suite points at tests/, suffix .
 phpstan.dist.neon            static analysis config, level max
 .php-cs-fixer.dist.php       coding standards config (PER-CS2.0)
 .github/workflows/ci.yml     jobs: tests, gpu-path, static-analysis, coding-standards — PHP 8.4 and 8.5
+.github/dependabot.yml       composer daily, github-actions weekly
 ```
 
 `src/Matrix.php` is still the centre of the library. There is no framework here to
@@ -207,21 +213,23 @@ every operator at once.
 ## Backend architecture
 
 `Matrix` no longer does the arithmetic itself. It validates, checks dimensions, and
-asks `Backends::resolveFor()` which driver should compute — drivers receive plain
-arrays with the dimensions alongside them and return plain arrays.
+asks `Backends::resolve()` which driver should compute — drivers receive the operand
+**buffers** with the dimensions alongside them and return a freshly allocated buffer.
 
 ```
 src/Backend/BackendInterface.php             the driver contract: six operations, plus isAvailable()
 src/Backend/Backends.php                     registry, selection and the auto-routing policy
-src/Backend/PhpBackend.php                   the original interpreted loops, verbatim
-src/Backend/BlasBackend.php                  OpenBLAS over FFI (CPU)
+src/Backend/Driver.php                       string-backed enum naming the built-in drivers plus "auto"
+src/Backend/Float64Buffer.php                allocate / copy / compare the double[] blocks everything speaks
+src/Backend/PhpBackend.php                   the interpreted loops, now over buffer offsets
+src/Backend/BlasBackend.php                  OpenBLAS over FFI (CPU), called on the stored buffers
 src/Backend/ClblastBackend.php               CLBlast over OpenCL (GPU, or CPU via PoCL)
-src/Backend/AcceleratedBackendTrait.php      packing, unpacking and the pow loop shared by both
+src/Backend/AcceleratedBackendTrait.php      the pow loop, the one operation no BLAS provides
 src/Backend/FallbackBackend.php              decorator: degrade to another driver instead of failing
 src/Backend/BackendNotAvailableException.php catchable, thrown at selection time only
 ```
 
-Three rules govern this part of the codebase, and none of them is negotiable:
+Four rules govern this part of the codebase, and none of them is negotiable:
 
 - **Hook safety.** Anything reachable from an operation runs inside an FFI callback,
   where a thrown exception becomes `Fatal error: Throwing from FFI callbacks is not
@@ -230,13 +238,19 @@ Three rules govern this part of the codebase, and none of them is negotiable:
   `Backends::use()` and `bootFromEnvironment()`. Under `auto`, a driver that fails at
   operation time is caught by `FallbackBackend` and the result is recomputed in pure
   PHP. Catching *inside* a hook is fine; only crossing the boundary is fatal.
-- **Accelerated drivers are float-only.** They compute in double precision, so they
-  cast integer cells and return floats. Never "fix" that by rounding results back to
-  integers.
-- **Auto-routing keeps integers on pure PHP.** `auto` may use an accelerated CPU
-  driver when an operand contains a float; an all-integer operation always takes the
-  `php` path, so its results stay bit-identical to what this library returned before
-  drivers existed. A GPU is never chosen automatically.
+- **Everything is float64.** A matrix stores `double` cells, every driver reads and
+  writes `double` cells. There is no integer path to preserve and no cast to make:
+  the constructor is the only place a value changes type, and it does so by writing
+  an int into a double slot, which FFI converts natively. Never add a userland cast
+  loop — that is exactly what the buffers exist to eliminate.
+- **Operands are read-only, results are fresh.** The buffers a driver receives are
+  the storage of matrices the caller still holds. A kernel that accumulates into an
+  argument (`daxpy`, `dscal`) must copy it into the result buffer first, with
+  `Float64Buffer::copyOf()`. Never return an operand as the result. This is also what
+  makes `FallbackBackend`'s recomputation safe.
+- **Auto-routing uses BLAS for everything, never a GPU.** `auto` picks the OpenBLAS
+  driver whenever it probes available, for every operation including element-wise
+  ones, and the pure-PHP driver otherwise. A GPU is never chosen automatically.
 
 An availability probe performs a real 1×1 operation, so it cannot disagree with what
 an operation would do a moment later. Probes are cached per process.

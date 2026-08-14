@@ -40,13 +40,17 @@ Review against the checklist below, in this order of severity.
   memory corruption.
 - CI must run on PHP 8.4 with `ffi.enable=1` and `opcache.jit=off`.
 
-## 3. PHPStan generics honesty (blocking)
+## 3. float64 storage honesty (blocking)
 
-`Matrix` is `@template-covariant T of int|float`.
+`Matrix` has no generic parameter: cells are `float`, stored in a native
+`double[rows * columns]` buffer.
 
-- Arithmetic that can widen the element type — division, exponentiation, and any mixed
-  int/float input — must be annotated as returning `Matrix<int|float>`, not `Matrix<T>`.
-- Flag any annotation that claims to preserve `T` through an operation whose maths does not.
+- Flag any reintroduced `Matrix<int>` / `Matrix<T>` annotation, or any signature claiming a
+  method returns integer cells. An integer literal in the constructor is input syntax only.
+- Flag userland cast loops over cells. The constructor writing an int into a double slot is
+  the only conversion there should be; anything else is the loop the buffers exist to remove.
+- Drivers must treat their operand buffers as read-only and return a freshly allocated one.
+  Returning an operand, or writing into one, is a blocking finding.
 - New code must be clean at PHPStan level max; suppressing with `@phpstan-ignore` needs an
   inline justification.
 
