@@ -55,12 +55,16 @@ jobs:
           NATIVE_PHP_MATRIX_BACKEND: php
 
   gpu-path:
-    name: GPU code path (CLBlast on PoCL)
+    name: GPU code path (CLBlast on PoCL, PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
     # The device code path gets its own red/green signal, on the CPU device PoCL provides, so a broken GPU driver
-    # is visible without reading through the rest of the suite. Only the driver's own tests run: pinning an
-    # accelerated backend process-wide turns integer results into floats by design, which is precisely what the
-    # tests asserting integer output would report as a failure
+    # is visible without reading through the rest of the suite. Now that matrix cells are float64 whichever driver
+    # computes them, pinning an accelerated backend no longer changes any expectation, so this job runs the entire
+    # suite on the device instead of only the driver's own tests
     env:
       NATIVE_PHP_MATRIX_BACKEND: clblast
       NATIVE_PHP_MATRIX_CL_DEVICE: cpu
@@ -76,16 +80,15 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
+          php-version: ${{ matrix.php }}
           extensions: ffi
           ini-values: ffi.enable=1, zend.assertions=1, opcache.jit=off
           coverage: none
 
       - uses: ramsey/composer-install@v4
 
-      # PHPUnit's --filter matches test method names, which .phpt files do not have, so the files are named
-      - name: Run the clblast backend tests
-        run: vendor/bin/phpunit tests/Functional/testClblast*.phpt
+      - name: Run test suite on the clblast backend
+        run: composer test
 
   static-analysis:
     name: PHPStan (level max, PHP ${{ matrix.php }})
