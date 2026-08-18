@@ -13,10 +13,8 @@
     "require": {
         "php": "^8.4",
         "ext-ffi": "*",
-        "lisachenko/z-engine": "8.4.x-dev || 8.5.x-dev"
+        "lisachenko/z-engine": "~8.4.2 || ~8.5.0"
     },
-    "minimum-stability": "dev",
-    "prefer-stable": true,
     "require-dev": {
         "friendsofphp/php-cs-fixer": "^3.75",
         "phpstan/phpstan": "^2.1",

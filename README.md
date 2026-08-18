@@ -58,7 +58,7 @@ The maths is plain PHP. The magic is only in getting the engine to call it.
 - **PHP `^8.4`** — 8.4 and 8.5 are supported in parallel. Z-Engine reads engine structures by byte offset and those offsets change on every PHP minor release, so each minor rides its own Z-Engine line; `Core::init()` refuses to boot on a mismatch rather than corrupting memory.
 - **`ext-ffi` enabled**, with `ffi.enable=1` for CLI usage.
 - **x64, non-thread-safe (NTS)** build — the same platform limitations as [Z-Engine](https://github.com/lisachenko/z-engine#requirements--support-matrix).
-- The **matching Z-Engine minor branch**. Composer resolves it for you from the `8.4.x-dev || 8.5.x-dev` constraint; mixing a Z-Engine built for another minor is not a configuration choice, it is undefined behaviour.
+- The **matching Z-Engine minor release line**. Composer resolves it for you from the `~8.4.2 || ~8.5.0` constraint; mixing a Z-Engine built for another minor is not a configuration choice, it is undefined behaviour.
 
 ## Installation
 
@@ -66,16 +66,9 @@ The maths is plain PHP. The magic is only in getting the engine to call it.
 composer require lisachenko/native-php-matrix:dev-master
 ```
 
-This package requires Z-Engine as `8.4.x-dev || 8.5.x-dev` — z-engine minors track PHP minors and are not interchangeable, so Composer resolves the line matching your PHP automatically (the `8.4` branch on PHP 8.4, `master` on PHP 8.5). Those are development branches, and the package itself is consumed from `dev-master`; Composer only resolves development stability at the **root** level, so your `composer.json` needs:
+This package requires Z-Engine as `~8.4.2 || ~8.5.0` — z-engine minors track PHP minors and are not interchangeable, so Composer resolves the release line matching your PHP automatically (`8.4.x` on PHP 8.4, `8.5.x` on PHP 8.5). Both are **stable tags**, so no `minimum-stability` tweak is needed for them.
 
-```json
-{
-    "minimum-stability": "dev",
-    "prefer-stable": true
-}
-```
-
-Once a native-php-matrix release covering the current code is tagged, this collapses to a plain `composer require lisachenko/native-php-matrix`.
+native-php-matrix itself is not tagged yet, which is why the command above asks for `dev-master`; that one dev constraint is explicit, so Composer accepts it without a root stability change. Once a native-php-matrix release is tagged, this collapses to a plain `composer require lisachenko/native-php-matrix`.
 
 No initialization call is needed: `bootstrap.php` ships in the package's `files` autoload and sets everything up behind `require vendor/autoload.php`.
 

@@ -32,13 +32,14 @@ Review against the checklist below, in this order of severity.
 
 ## 2. Version pins (blocking)
 
-- `composer.json` must keep `"php": "~8.4.0"` and `"lisachenko/z-engine": "dev-master"`,
-  with root `"minimum-stability": "dev"` and `"prefer-stable": true`.
-- Any diff that widens the PHP constraint (`^8.4`, `>=8.4`), drops the z-engine dev
-  requirement, or bypasses `Core::init()`'s version guard is rejected outright. Offsets into
-  engine structures are minor-version specific; loosening the pin trades a clear error for
-  memory corruption.
-- CI must run on PHP 8.4 with `ffi.enable=1` and `opcache.jit=off`.
+- `composer.json` must keep `"php": "^8.4"` and `"lisachenko/z-engine": "~8.4.2 || ~8.5.0"`
+  — one stable z-engine line per supported PHP minor, resolved by Composer against the
+  running PHP.
+- Any diff that widens either constraint beyond the minors z-engine has definitions for
+  (`>=8.4`, a `^8.4` z-engine constraint that would span future lines), or bypasses
+  `Core::init()`'s version guard, is rejected outright. Offsets into engine structures are
+  minor-version specific; loosening the pin trades a clear error for memory corruption.
+- CI must run on PHP 8.4 and 8.5 with `ffi.enable=1` and `opcache.jit=off`.
 
 ## 3. PHPStan generics honesty (blocking)
 
