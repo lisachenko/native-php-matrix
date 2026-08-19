@@ -3,7 +3,6 @@ Matrix can not be created from rows with a different number of columns
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --FILE--
 <?php
 declare(strict_types=1);

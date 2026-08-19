@@ -31,26 +31,31 @@ say so and stop.
 composer test
 ```
 
-The suite is PHPUnit 12 driving `.phpt` files in `tests/Functional/`. Three INI
+The suite is PHPUnit 12 driving `.phpt` files in `tests/Functional/`. Two INI
 settings must hold in **both** the parent PHPUnit process and every `.phpt` child
 process it spawns:
 
 - `ffi.enable=1` — FFI cannot be turned on at runtime.
 - `opcache.jit=off` — the JIT rewrites the very executor internals z-engine hooks.
-- `error_reporting=E_ALL & ~E_DEPRECATED` — a guard against dependency deprecations
-  leaking into captured output. PHPUnit's `.phpt` runner forces `display_errors=1`,
-  so a deprecation raised by a dependency is prepended to the captured output of
-  **every** test and each `--EXPECT--` block fails on noise that has nothing to do
-  with this library. The specific offender that motivated it — z-engine declaring
-  implicitly nullable parameters (e.g. `ZEngine\Type\OpLine::__construct()`) — is
-  fixed as of the stable releases (`~8.4.2 || ~8.5.0`), and the suite passes with
-  `error_reporting=E_ALL` forced on both minors, so the line is now belt-and-braces
-  rather than a requirement.
+
+Both are load-bearing: PHPUnit's `.phpt` runner forces `display_errors=1`, so
+anything a child process emits before its own output — a startup error, a warning, a
+deprecation from a dependency — is prepended to the captured output and the
+`--EXPECT--` block fails on noise that has nothing to do with this library.
+
+The suite used to carry a third line, `error_reporting=E_ALL & ~E_DEPRECATED`, for
+exactly that reason: z-engine's development line declared implicitly nullable
+parameters (e.g. `ZEngine\Type\OpLine::__construct()`) and PHP reported the
+deprecation into every test's output. The stable releases now required
+(`~8.4.2 || ~8.5.0`) declare those parameters `?Type`, the suite passes with
+`error_reporting=E_ALL` forced on both minors, and the line has been removed. **Do
+not add it back to silence a new diagnostic** — a deprecation appearing in the
+captured output is a signal about a dependency or about this library, and hiding it
+only moves the failure somewhere harder to find.
 
 CI supplies the FFI and JIT pair as `ini-values` on the PHP setup step, and **every
-`.phpt` file carries its own `--INI--` section** — all three lines — so the child
-processes inherit nothing by luck. The deprecation suppression only ever matters in
-the children, because those are the processes whose output is compared.
+`.phpt` file carries its own `--INI--` section** — both lines — so the child
+processes inherit nothing by luck.
 
 For a local one-off run without touching `php.ini`:
 
@@ -93,7 +98,6 @@ Matrices can be added with "+" operator
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --FILE--
 <?php
 declare(strict_types=1);
@@ -123,9 +127,9 @@ array(1) {
 
 Rules for a new test:
 
-- `--INI--` is **mandatory, all three lines** — without them the child process has no
-  FFI, runs the JIT over hooked internals, or drowns the expected output in a
-  z-engine deprecation, and the test fails in a way that looks like a library bug.
+- `--INI--` is **mandatory, both lines** — without them the child process has no FFI
+  or runs the JIT over hooked internals, and the test fails in a way that looks like
+  a library bug.
 - Include the autoloader with the relative path `__DIR__ . '/../../vendor/autoload.php'`;
   that is what triggers `bootstrap.php` and installs the handlers.
 - Prefer `--EXPECT--` (exact match). Use `--EXPECTREGEX--` only when the output

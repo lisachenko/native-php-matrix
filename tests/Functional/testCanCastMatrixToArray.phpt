@@ -3,7 +3,6 @@ Matrix can be cast to array with "(array)" operator
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --FILE--
 <?php
 declare(strict_types=1);
