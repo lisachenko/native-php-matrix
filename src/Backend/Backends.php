@@ -27,15 +27,19 @@ use Throwable;
  * Built-in drivers are addressed by a {@see Driver} case, third-party ones by the string they were registered
  * under; every method that names a driver accepts either.
  *
- * The default selection is {@see Driver::Auto}, and now that matrices are stored as native float64 buffers its
- * rules fit in two lines:
+ * The default selection is {@see Driver::Auto}, and because a matrix stores its cells in the form of the driver
+ * active when it is built, its rules fit in two lines:
  *
- * - an accelerated CPU driver probed successfully → that driver, for **every** operation. There is no longer a
- *   marshalling cost that could make an element-wise operation cheaper in the interpreter, and no integer
- *   semantics left to protect;
- * - nothing available → the pure-PHP driver, which needs no library and computes the same values.
+ * - an accelerated CPU driver probed successfully → that driver, for **every** operation, on matrices stored as
+ *   native buffers. There is no marshalling cost that could make an element-wise operation cheaper in the
+ *   interpreter, and no integer semantics to protect;
+ * - nothing available → the pure-PHP driver, on matrices stored as PHP arrays it walks natively, computing the
+ *   same values.
  *
  * A GPU driver is still never chosen automatically: moving data across a bus is a decision, not a default.
+ *
+ * The answer of {@see self::resolve()} is cached until the selection or the registry changes, because it is asked
+ * twice per operation — once when the operands were built, once when the operator runs.
  */
 final class Backends
 {
@@ -73,16 +77,19 @@ final class Backends
     private static string $selected = Driver::Auto->value;
 
     /**
-     * Driver that automatic routing resolved to, remembered for the process
+     * Driver that the current selection resolved to, remembered until the selection or the registry changes
      */
-    private static ?BackendInterface $automaticBackend = null;
+    private static ArrayBackendInterface|BufferBackendInterface|null $resolved = null;
 
     /**
      * Selects the driver to use for every following operation
      *
+     * Matrices built from now on store their cells in the form this driver declares. Matrices that already exist
+     * keep theirs, and are converted for an operation only when their form differs from the driver's.
+     *
      * @param Driver|string $driver Built-in driver, a registered third-party name, or {@see Driver::Auto}
      *
-     * @throws InvalidArgumentException     When no driver is registered under that name
+     * @throws InvalidArgumentException     When no driver is registered under that name, or it declares no storage
      * @throws BackendNotAvailableException When the driver is known but unusable in this environment
      */
     public static function use(Driver|string $driver): void
@@ -90,6 +97,7 @@ final class Backends
         $name = Driver::nameOf($driver);
         if ($name === Driver::Auto->value) {
             self::$selected = $name;
+            self::$resolved = null;
 
             return;
         }
@@ -108,8 +116,17 @@ final class Backends
                 $name,
             ));
         }
+        if (self::withStorage(self::instance($name)) === null) {
+            throw new InvalidArgumentException(sprintf(
+                'Matrix backend "%s" implements neither %s nor %s, so no matrix can be stored for it',
+                $name,
+                ArrayBackendInterface::class,
+                BufferBackendInterface::class,
+            ));
+        }
 
         self::$selected = $name;
+        self::$resolved = null;
     }
 
     /**
@@ -129,7 +146,7 @@ final class Backends
         self::$factories  = $factories;
 
         unset(self::$instances[$name], self::$availability[$name]);
-        self::$automaticBackend = null;
+        self::$resolved = null;
     }
 
     /**
@@ -180,11 +197,11 @@ final class Backends
      */
     public static function reset(): void
     {
-        self::$factories        = null;
-        self::$instances        = [];
-        self::$availability     = [];
-        self::$selected         = Driver::Auto->value;
-        self::$automaticBackend = null;
+        self::$factories    = null;
+        self::$instances    = [];
+        self::$availability = [];
+        self::$selected     = Driver::Auto->value;
+        self::$resolved     = null;
     }
 
     /**
@@ -209,35 +226,68 @@ final class Backends
     }
 
     /**
-     * Returns the driver that must carry out an operation
+     * Returns the driver that must carry out an operation, or whose storage a new matrix must use
      *
-     * This is the hot path of every overloaded operator and therefore never throws: an explicit selection was
-     * validated when it was made, and automatic routing has the always-available pure-PHP driver to fall back on.
+     * This is the hot path of every overloaded operator and of every constructor, and therefore never throws: an
+     * explicit selection was validated when it was made, and automatic routing has the always-available pure-PHP
+     * driver to fall back on. The storage contract the driver implements is what the caller dispatches on.
      */
-    public static function resolve(): BackendInterface
+    public static function resolve(): ArrayBackendInterface|BufferBackendInterface
+    {
+        return self::$resolved ??= self::resolveSelection();
+    }
+
+    /**
+     * Turns the current selection into the driver that carries it out
+     */
+    private static function resolveSelection(): ArrayBackendInterface|BufferBackendInterface
     {
         if (self::$selected !== Driver::Auto->value) {
-            return self::instance(self::$selected);
+            // use() refuses a driver without a storage contract, so the fallback below is never taken in practice
+            return self::withStorage(self::instance(self::$selected)) ?? new PhpBackend();
         }
 
-        return self::$automaticBackend ??= self::resolveAutomaticBackend();
+        return self::resolveAutomaticBackend();
     }
 
     /**
      * Picks the driver automatic routing uses
      *
-     * Only CPU drivers take part — sending data to a GPU is a decision, not a default — and the winner is wrapped
-     * so that a hardware failure at operation time degrades into a pure-PHP recomputation instead of a fatal
-     * error inside an engine hook.
+     * Only CPU drivers take part — sending data to a GPU is a decision, not a default — and a buffer driver is
+     * wrapped so that a hardware failure at operation time degrades into a pure-PHP recomputation instead of a
+     * fatal error inside an engine hook. The built-in names can be re-registered, which is why every answer is
+     * checked against the storage contracts instead of assumed.
      */
-    private static function resolveAutomaticBackend(): BackendInterface
+    private static function resolveAutomaticBackend(): ArrayBackendInterface|BufferBackendInterface
     {
-        $php = self::instance(Driver::Php->value);
+        $php      = self::withStorage(self::instance(Driver::Php->value));
+        $fallback = $php instanceof ArrayBackendInterface ? $php : new PhpBackend();
+
         if (self::probe(Driver::Blas->value)) {
-            return new FallbackBackend(self::instance(Driver::Blas->value), $php);
+            $blas = self::withStorage(self::instance(Driver::Blas->value));
+            if ($blas instanceof BufferBackendInterface) {
+                return new FallbackBackend($blas, $fallback);
+            }
+            if ($blas !== null) {
+                return $blas;
+            }
         }
 
-        return $php;
+        return $php ?? $fallback;
+    }
+
+    /**
+     * Returns the driver if it implements one of the two storage contracts, null otherwise
+     *
+     * @param BackendInterface $backend Driver to check
+     */
+    private static function withStorage(BackendInterface $backend): ArrayBackendInterface|BufferBackendInterface|null
+    {
+        if ($backend instanceof ArrayBackendInterface || $backend instanceof BufferBackendInterface) {
+            return $backend;
+        }
+
+        return null;
     }
 
     /**

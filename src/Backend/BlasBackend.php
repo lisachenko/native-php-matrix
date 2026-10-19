@@ -25,8 +25,8 @@ use Throwable;
  * subtraction are exactly that over the flattened cells — and `cblas_dscal` scales a vector in place. No header
  * file is involved: the declarations are inline, and the CBLAS enums travel as the plain integers they are.
  *
- * Nothing is marshalled. A matrix already stores its cells as the contiguous, row-major `double[]` block CBLAS
- * wants, so an operand is handed to the kernel as the pointer it already is, and the buffer the kernel writes
+ * Nothing is marshalled. A matrix built while this driver is active stores its cells as the contiguous,
+ * row-major `double[]` block CBLAS wants, so an operand is handed to the kernel as the pointer it already is, and the buffer the kernel writes
  * becomes the storage of the resulting matrix. The only copy left is the one the accumulating kernels force:
  * `daxpy` and `dscal` write into an operand, so the operand is `memcpy`-ed into the result buffer first and the
  * kernel is pointed at the copy — one bulk copy per operation instead of a cell-by-cell conversion of both
@@ -36,7 +36,7 @@ use Throwable;
  * arguments are 64 bit wide — must never be probed here: its ABI does not match these declarations and the
  * dimensions would arrive at the kernel as garbage.
  */
-final class BlasBackend implements BackendInterface
+final class BlasBackend implements BufferBackendInterface
 {
     use AcceleratedBackendTrait;
 

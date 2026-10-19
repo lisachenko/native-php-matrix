@@ -16,11 +16,13 @@ use FFI;
 use FFI\CData;
 
 /**
- * The storage every matrix and every driver in this package speaks: a flat, row-major block of float64 cells
+ * The storage the accelerated drivers speak: a flat, row-major block of float64 cells
  *
- * A `double[rows * columns]` allocation is what a BLAS kernel, an OpenCL buffer and an interpreted loop can all
- * read without a conversion in between. Keeping matrices in that shape from the moment they are constructed is
- * what removes the pack/unpack step that used to be charged to every single operation.
+ * A `double[rows * columns]` allocation is what a BLAS kernel and an OpenCL transfer read without a conversion in
+ * between. A matrix built while such a driver is active is kept in that shape from the moment it is constructed,
+ * which removes the pack/unpack step that would otherwise be charged to every single operation. Under the
+ * pure-PHP driver a matrix keeps PHP rows instead; the two conversions between the forms live here as well, for
+ * the rare operation whose operand was built under another driver.
  *
  * The buffers are allocated through a bare `FFI::cdef()` scope of their own, not through a driver's binding, on
  * purpose: a `double` is a `double` in every FFI type context, so a buffer allocated here is accepted by the CBLAS
@@ -95,6 +97,68 @@ final class Float64Buffer
     }
 
     /**
+     * Allocates a buffer holding the cells of the given rows
+     *
+     * This is one of the two storage conversions, used only where a matrix stored as PHP rows meets a driver that
+     * computes on buffers — never on the path of an operation whose operands already match their driver. It has no
+     * loop over the cells in PHP: the rows are packed into their native byte representation and copied in bulk.
+     *
+     * @param non-empty-list<non-empty-list<float>> $rows  Rows of float cells
+     * @param positive-int                          $count Total number of cells the rows hold
+     *
+     * @return CData Owned `double[count]` buffer, row-major
+     */
+    public static function fromRows(array $rows, int $count): CData
+    {
+        $buffer = self::allocate($count);
+        $packed = self::packRows($rows);
+        FFI::memcpy($buffer, $packed, strlen($packed));
+
+        return $buffer;
+    }
+
+    /**
+     * Returns the cells of a buffer as a list of rows of floats
+     *
+     * The other storage conversion, and the boundary between a buffer and ordinary PHP: the bytes are read out in
+     * one call and unpacked natively, so the rows never cost a PHP-level loop over the cells either.
+     *
+     * @param CData        $buffer  Row-major buffer holding at least rows × columns cells
+     * @param positive-int $rows    Number of rows to read
+     * @param positive-int $columns Number of columns to read
+     *
+     * @return non-empty-list<non-empty-list<float>> Cells, row after row
+     */
+    public static function toRows(CData $buffer, int $rows, int $columns): array
+    {
+        $cells = unpack('d*', FFI::string($buffer, self::bytes($rows * $columns)));
+
+        /** @var non-empty-list<non-empty-list<float>> */
+        return array_chunk(is_array($cells) ? array_values($cells) : [], $columns);
+    }
+
+    /**
+     * Tells whether two lists of rows hold bit-identical cells
+     *
+     * The array counterpart of {@see self::identical()}, with the same deliberately storage-level semantics: the
+     * cells are compared as the doubles they are packed into, so `-0.0` does not match `0.0` and a `NAN` matches a
+     * `NAN` with the same bit pattern, exactly as a `memcmp` over two buffers decides.
+     *
+     * @param non-empty-list<non-empty-list<float>> $left  Left rows
+     * @param non-empty-list<non-empty-list<float>> $right Right rows, of the same shape
+     */
+    public static function identicalRows(array $left, array $right): bool
+    {
+        foreach ($left as $rowIndex => $row) {
+            if (pack('d*', ...$row) !== pack('d*', ...$right[$rowIndex])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Reads a single cell out of a buffer
      *
      * The hot loops of the drivers index their buffers directly, because a call per cell would dominate them.
@@ -134,6 +198,21 @@ final class Float64Buffer
 
         /** @var positive-int */
         return $count * self::$cellSize;
+    }
+
+    /**
+     * Packs rows of floats into their native, machine-order double representation
+     *
+     * @param non-empty-list<non-empty-list<float>> $rows Rows of float cells
+     */
+    private static function packRows(array $rows): string
+    {
+        $packed = '';
+        foreach ($rows as $row) {
+            $packed .= pack('d*', ...$row);
+        }
+
+        return $packed;
     }
 
     /**

@@ -11,7 +11,8 @@ parameters:
         # models FFI\CData as a plain object with neither ArrayAccess nor a known cell type. Reading a cell is
         # therefore "mixed" to it, writing one degrades the variable to "mixed" as well, and any arithmetic on a
         # cell inherits that "mixed". Every entry below is one of those three shapes, confined to the files that
-        # walk raw memory: the cell loops of the drivers, the storage of Matrix and the buffer helper itself
+        # walk raw memory: the cell loop of the accelerated drivers, the buffer storage of Matrix and the buffer
+        # helper itself. The pure-PHP driver needs none of them: it computes on typed PHP arrays
         -
             identifier: offsetAccess.nonOffsetAccessible
             path: src/Backend/AcceleratedBackendTrait.php
@@ -21,17 +22,7 @@ parameters:
         -
             identifier: binaryOp.invalid
             path: src/Backend/AcceleratedBackendTrait.php
-        # The pure-PHP driver is nothing but those loops now that cells live in a buffer rather than in arrays
-        -
-            identifier: offsetAccess.nonOffsetAccessible
-            path: src/Backend/PhpBackend.php
-        -
-            identifier: return.type
-            path: src/Backend/PhpBackend.php
-        -
-            identifier: binaryOp.invalid
-            path: src/Backend/PhpBackend.php
-        # Matrix writes its cells into the buffer as it validates them, and reads them back in toArray()
+        # Matrix writes its cells into a buffer as it validates them, when the active driver stores buffers
         -
             identifier: offsetAccess.nonOffsetAccessible
             path: src/Matrix.php

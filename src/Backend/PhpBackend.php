@@ -12,23 +12,21 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix\Backend;
 
-use FFI\CData;
-
 /**
- * Reference driver: the arithmetic carried out by the interpreter itself
+ * Reference driver: the original interpreted PHP arithmetic, over PHP arrays
  *
- * The loop bodies are the ones this library shipped before the drivers existed; what changed is what they walk
- * over. Cells now live in a flat `double[]` buffer rather than in nested arrays, so the loops index offsets
- * instead of dereferencing rows, and the multiplication keeps its original accumulation order — summing the
- * products of a row in a different order can change the last bits of a float result, and the parity tests hold
- * this driver and the accelerated ones to the same answer.
+ * The loop bodies are the ones this library shipped before the drivers existed, kept verbatim down to the
+ * iteration order — summing the products of a row in a different order can change the last bits of a float
+ * result, and the parity tests hold this driver and the accelerated ones to the same answer. The single
+ * adaptation is the accumulator of the multiplication, which starts at `0.0`: cells are float64, and an integer
+ * seed would be the one place an int could slip into a result.
  *
- * Reading and writing a cell through `FFI\CData` is slower than touching a PHP array element, which makes this
- * driver slower than it used to be on paper. That is a deliberate trade: it is the fallback that must work with
- * no library installed at all, while every operation that matters for speed is now handed to a kernel without a
- * conversion in between.
+ * The driver declares {@see ArrayBackendInterface}, so the matrices built while it is active store their cells as
+ * nested PHP arrays and these loops walk them natively. A `foreach` over a packed array is the fastest thing the
+ * interpreter does; reading the same cells through `FFI\CData` costs two to three times as much, which is why the
+ * storage follows the driver instead of the driver following one storage.
  */
-final class PhpBackend implements BackendInterface
+final class PhpBackend implements ArrayBackendInterface
 {
     /**
      * Pure PHP is available wherever this library runs
@@ -41,61 +39,62 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function sum(CData $left, CData $right, int $rows, int $columns): CData
+    public function sum(array $left, array $right, int $rows, int $columns): array
     {
-        $count  = $rows * $columns;
-        $result = Float64Buffer::allocate($count);
-        for ($cell = 0; $cell < $count; $cell++) {
-            $result[$cell] = $left[$cell] + $right[$cell];
-        }
-
-        return $result;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public function subtract(CData $left, CData $right, int $rows, int $columns): CData
-    {
-        $count  = $rows * $columns;
-        $result = Float64Buffer::allocate($count);
-        for ($cell = 0; $cell < $count; $cell++) {
-            $result[$cell] = $left[$cell] - $right[$cell];
-        }
-
-        return $result;
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public function multiply(CData $left, CData $right, int $rows, int $inner, int $columns): CData
-    {
-        // The multiplier is consumed column by column, and a column of a row-major buffer is strided: consecutive
-        // cells sit $columns doubles apart, so at any real size every read is a cache miss. Transposing it once,
-        // for O(inner * columns), is the buffer-level form of the array_column() this loop used to do — after it
-        // both operands are walked contiguously in the inner loop
-        $transposed = Float64Buffer::allocate($inner * $columns);
-        for ($row = 0; $row < $inner; $row++) {
-            $rowOffset = $row * $columns;
-            for ($column = 0; $column < $columns; $column++) {
-                $transposed[$column * $inner + $row] = $right[$rowOffset + $column];
+        $result = [];
+        foreach ($left as $rowIndex => $row) {
+            $anotherRow = $right[$rowIndex];
+            $resultRow  = [];
+            foreach ($row as $columnIndex => $cellValue) {
+                $resultRow[] = $cellValue + $anotherRow[$columnIndex];
             }
+            $result[] = $resultRow;
         }
 
-        $result = Float64Buffer::allocate($rows * $columns);
-        for ($row = 0; $row < $rows; $row++) {
-            $leftOffset   = $row * $inner;
-            $resultOffset = $row * $columns;
-            for ($column = 0; $column < $columns; $column++) {
-                $columnOffset = $column * $inner;
-                // Summation order is unchanged, which is what keeps this driver bit-identical to the kernels
+        return $result;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function subtract(array $left, array $right, int $rows, int $columns): array
+    {
+        $result = [];
+        foreach ($left as $rowIndex => $row) {
+            $anotherRow = $right[$rowIndex];
+            $resultRow  = [];
+            foreach ($row as $columnIndex => $cellValue) {
+                $resultRow[] = $cellValue - $anotherRow[$columnIndex];
+            }
+            $result[] = $resultRow;
+        }
+
+        return $result;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function multiply(array $left, array $right, int $rows, int $inner, int $columns): array
+    {
+        // Columns of the multiplier are extracted only once, they are reused for every row of the left operand
+        $multiplierColumns = [];
+        foreach (array_keys($right[0]) as $column) {
+            $multiplierColumns[] = array_column($right, $column);
+        }
+
+        $result = [];
+        foreach ($left as $rowItems) {
+            $resultRow = [];
+            foreach ($multiplierColumns as $columnItems) {
                 $cellValue = 0.0;
-                for ($step = 0; $step < $inner; $step++) {
-                    $cellValue += $left[$leftOffset + $step] * $transposed[$columnOffset + $step];
+                foreach ($rowItems as $key => $value) {
+                    $cellValue += $value * $columnItems[$key];
                 }
-                $result[$resultOffset + $column] = $cellValue;
+
+                $resultRow[] = $cellValue;
             }
+            $result[] = $resultRow;
         }
 
         return $result;
@@ -104,12 +103,15 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function multiplyByScalar(CData $matrix, float $value, int $rows, int $columns): CData
+    public function multiplyByScalar(array $matrix, float $value, int $rows, int $columns): array
     {
-        $count  = $rows * $columns;
-        $result = Float64Buffer::allocate($count);
-        for ($cell = 0; $cell < $count; $cell++) {
-            $result[$cell] = $matrix[$cell] * $value;
+        $result = [];
+        foreach ($matrix as $row) {
+            $resultRow = [];
+            foreach ($row as $cellValue) {
+                $resultRow[] = $cellValue * $value;
+            }
+            $result[] = $resultRow;
         }
 
         return $result;
@@ -118,12 +120,15 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function divideByScalar(CData $matrix, float $value, int $rows, int $columns): CData
+    public function divideByScalar(array $matrix, float $value, int $rows, int $columns): array
     {
-        $count  = $rows * $columns;
-        $result = Float64Buffer::allocate($count);
-        for ($cell = 0; $cell < $count; $cell++) {
-            $result[$cell] = $matrix[$cell] / $value;
+        $result = [];
+        foreach ($matrix as $row) {
+            $resultRow = [];
+            foreach ($row as $cellValue) {
+                $resultRow[] = $cellValue / $value;
+            }
+            $result[] = $resultRow;
         }
 
         return $result;
@@ -132,12 +137,15 @@ final class PhpBackend implements BackendInterface
     /**
      * {@inheritDoc}
      */
-    public function powByScalar(CData $matrix, float $value, int $rows, int $columns): CData
+    public function powByScalar(array $matrix, float $value, int $rows, int $columns): array
     {
-        $count  = $rows * $columns;
-        $result = Float64Buffer::allocate($count);
-        for ($cell = 0; $cell < $count; $cell++) {
-            $result[$cell] = $matrix[$cell] ** $value;
+        $result = [];
+        foreach ($matrix as $row) {
+            $resultRow = [];
+            foreach ($row as $cellValue) {
+                $resultRow[] = $cellValue ** $value;
+            }
+            $result[] = $resultRow;
         }
 
         return $result;

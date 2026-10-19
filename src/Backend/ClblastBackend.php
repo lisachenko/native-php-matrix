@@ -34,7 +34,7 @@ use Throwable;
  * across a bus is a decision, not a default. And unlike host memory, device buffers are not garbage collected:
  * every one of them is released in a `finally` block, whatever happens to the operation.
  */
-final class ClblastBackend implements BackendInterface
+final class ClblastBackend implements BufferBackendInterface
 {
     use AcceleratedBackendTrait;
 

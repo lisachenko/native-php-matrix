@@ -11,7 +11,7 @@
 declare(strict_types=1);
 
 use FFI\CData;
-use Lisachenko\NativePhpMatrix\Backend\BackendInterface;
+use Lisachenko\NativePhpMatrix\Backend\BufferBackendInterface;
 use Lisachenko\NativePhpMatrix\Backend\Float64Buffer;
 
 /**
@@ -22,7 +22,7 @@ use Lisachenko\NativePhpMatrix\Backend\Float64Buffer;
  * is exactly why this stub exists. The bodies still honour the contract — a fresh buffer, never an operand — so
  * that the stub cannot become a counter-example to it.
  */
-final class UnavailableBackend implements BackendInterface
+final class UnavailableBackend implements BufferBackendInterface
 {
     public function isAvailable(): bool
     {
