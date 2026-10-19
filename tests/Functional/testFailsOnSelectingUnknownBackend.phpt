@@ -3,7 +3,6 @@ Selecting a backend that is not registered fails with a catchable exception
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --ENV--
 NATIVE_PHP_MATRIX_BACKEND=
 --FILE--

@@ -3,7 +3,6 @@ The blas backend raises a matrix to a power in floats
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --ENV--
 NATIVE_PHP_MATRIX_BACKEND=blas
 --SKIPIF--

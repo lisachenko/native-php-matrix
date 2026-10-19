@@ -3,7 +3,6 @@ The clblast backend produces the same product as the pure PHP backend
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --ENV--
 NATIVE_PHP_MATRIX_BACKEND=clblast
 --SKIPIF--

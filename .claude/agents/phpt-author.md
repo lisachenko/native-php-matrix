@@ -23,7 +23,6 @@ One-line description of the behaviour, in the present tense
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --FILE--
 <?php
 declare(strict_types=1);
@@ -52,12 +51,13 @@ array(1) {
 
 ## Rules
 
-- **`--INI--` is mandatory, all three lines.** `ffi.enable` cannot be set at runtime, the
-  JIT rewrites the executor internals z-engine hooks, and
-  `error_reporting=E_ALL & ~E_DEPRECATED` hides a deprecation that z-engine `dev-master`
-  itself triggers on PHP 8.4 (implicitly nullable parameters). PHPUnit's `.phpt` runner
-  forces `display_errors=1`, so without that third line the dependency's deprecation is
-  prepended to your captured output and the test fails on noise.
+- **`--INI--` is mandatory, both lines.** `ffi.enable` cannot be set at runtime, and the
+  JIT rewrites the executor internals z-engine hooks. There is no `error_reporting` line
+  any more: it existed only to hide a deprecation z-engine's development line raised
+  (implicitly nullable parameters), and the stable releases this package requires
+  (`~8.4.2 || ~8.5.0`) raise none. Do not add one back — PHPUnit's `.phpt` runner forces
+  `display_errors=1`, so a diagnostic reaching your captured output is real information,
+  not noise to suppress.
 - **An operator cannot throw into userland.** `__doOperation`/`__compare` run inside an FFI
   callback, and PHP 8.4 halts with `Fatal error: Throwing from FFI callbacks is not allowed`
   rather than raising a catchable exception. Never write `try`/`catch` around `$a + $b` in a

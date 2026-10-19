@@ -3,7 +3,6 @@ The blas backend subtracts matrices with a negatively scaled cblas_daxpy
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --ENV--
 NATIVE_PHP_MATRIX_BACKEND=blas
 --SKIPIF--

@@ -3,7 +3,6 @@ The blas backend multiplies float matrices with cblas_dgemm
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --ENV--
 NATIVE_PHP_MATRIX_BACKEND=blas
 --SKIPIF--

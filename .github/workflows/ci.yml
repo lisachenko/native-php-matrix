@@ -9,9 +9,9 @@ on:
 permissions:
   contents: read
 
-# z-engine tracks one PHP minor per release line; the "8.4.x-dev || 8.5.x-dev"
-# constraint lets Composer resolve the line matching each runner's PHP, so the
-# suite runs on PHP 8.4 and 8.5 in parallel.
+# z-engine tracks one PHP minor per release line; the "~8.4.2 || ~8.5.0" constraint
+# lets Composer resolve the stable line matching each runner's PHP, so the suite
+# runs on PHP 8.4 and 8.5 in parallel.
 jobs:
   tests:
     name: Tests (PHP ${{ matrix.php }})

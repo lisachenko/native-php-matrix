@@ -3,7 +3,6 @@ The NATIVE_PHP_MATRIX_BACKEND environment variable pins the backend at bootstrap
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --ENV--
 NATIVE_PHP_MATRIX_BACKEND=php
 --FILE--

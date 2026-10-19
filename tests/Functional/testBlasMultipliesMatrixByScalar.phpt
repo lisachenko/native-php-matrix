@@ -3,7 +3,6 @@ The blas backend multiplies a matrix by a scalar with cblas_dscal
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --ENV--
 NATIVE_PHP_MATRIX_BACKEND=blas
 --SKIPIF--

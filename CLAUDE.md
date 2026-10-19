@@ -15,9 +15,10 @@ structures (`zend_class_entry`, `zval`, `zend_object_handlers`) by byte offset, 
 those offsets change on every PHP minor release. Running against the wrong minor
 does not throw a nice exception; it reads and writes the wrong memory.
 
-That is why z-engine is required as **`8.4.x-dev || 8.5.x-dev`**: Composer resolves
-the line matching the running PHP (the `8.4` branch on PHP 8.4, `master` — aliased
-`8.5.x-dev` — on PHP 8.5). `ZEngine\Core::init()` (called from `bootstrap.php`)
+That is why z-engine is required as **`~8.4.2 || ~8.5.0`**: Composer resolves the
+release line matching the running PHP (`8.4.x` on PHP 8.4, `8.5.x` on PHP 8.5 — each
+tag declares its own `~8.4.0`/`~8.5.0` platform requirement, so only one line can
+ever satisfy a given runtime). `ZEngine\Core::init()` (called from `bootstrap.php`)
 enforces the exact match and aborts with a clear message. **Never "fix" an
 initialization failure by loosening the constraints past the minors z-engine has
 definitions for, skipping `Core::init()`, or defeating the guard.** If the
@@ -30,24 +31,31 @@ say so and stop.
 composer test
 ```
 
-The suite is PHPUnit 12 driving `.phpt` files in `tests/Functional/`. Three INI
+The suite is PHPUnit 12 driving `.phpt` files in `tests/Functional/`. Two INI
 settings must hold in **both** the parent PHPUnit process and every `.phpt` child
 process it spawns:
 
 - `ffi.enable=1` — FFI cannot be turned on at runtime.
 - `opcache.jit=off` — the JIT rewrites the very executor internals z-engine hooks.
-- `error_reporting=E_ALL & ~E_DEPRECATED` — z-engine `dev-master` still declares
-  implicitly nullable parameters (e.g. `ZEngine\Type\OpLine::__construct()`), which
-  PHP 8.4 reports as a deprecation. PHPUnit's `.phpt` runner forces
-  `display_errors=1`, so without this the dependency's deprecation is prepended to
-  the captured output of **every** test and each `--EXPECT--` block fails on noise
-  that has nothing to do with this library. Drop the suppression once z-engine
-  declares those parameters `?Type`.
+
+Both are load-bearing: PHPUnit's `.phpt` runner forces `display_errors=1`, so
+anything a child process emits before its own output — a startup error, a warning, a
+deprecation from a dependency — is prepended to the captured output and the
+`--EXPECT--` block fails on noise that has nothing to do with this library.
+
+The suite used to carry a third line, `error_reporting=E_ALL & ~E_DEPRECATED`, for
+exactly that reason: z-engine's development line declared implicitly nullable
+parameters (e.g. `ZEngine\Type\OpLine::__construct()`) and PHP reported the
+deprecation into every test's output. The stable releases now required
+(`~8.4.2 || ~8.5.0`) declare those parameters `?Type`, the suite passes with
+`error_reporting=E_ALL` forced on both minors, and the line has been removed. **Do
+not add it back to silence a new diagnostic** — a deprecation appearing in the
+captured output is a signal about a dependency or about this library, and hiding it
+only moves the failure somewhere harder to find.
 
 CI supplies the FFI and JIT pair as `ini-values` on the PHP setup step, and **every
-`.phpt` file carries its own `--INI--` section** — all three lines — so the child
-processes inherit nothing by luck. The deprecation suppression only ever matters in
-the children, because those are the processes whose output is compared.
+`.phpt` file carries its own `--INI--` section** — both lines — so the child
+processes inherit nothing by luck.
 
 For a local one-off run without touching `php.ini`:
 
@@ -99,7 +107,6 @@ Matrices can be added with "+" operator
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --FILE--
 <?php
 declare(strict_types=1);
@@ -118,20 +125,20 @@ array(1) {
   [0]=>
   array(3) {
     [0]=>
-    int(5)
+    float(5)
     [1]=>
-    int(7)
+    float(7)
     [2]=>
-    int(9)
+    float(9)
   }
 }
 ```
 
 Rules for a new test:
 
-- `--INI--` is **mandatory, all three lines** — without them the child process has no
-  FFI, runs the JIT over hooked internals, or drowns the expected output in a
-  z-engine deprecation, and the test fails in a way that looks like a library bug.
+- `--INI--` is **mandatory, both lines** — without them the child process has no FFI
+  or runs the JIT over hooked internals, and the test fails in a way that looks like
+  a library bug.
 - Include the autoloader with the relative path `__DIR__ . '/../../vendor/autoload.php'`;
   that is what triggers `bootstrap.php` and installs the handlers.
 - Prefer `--EXPECT--` (exact match). Use `--EXPECTREGEX--` only when the output
@@ -305,16 +312,17 @@ stable under `composer cs:fix`.
 
 ## Dependency policy
 
-- `lisachenko/z-engine` is required as **`8.4.x-dev || 8.5.x-dev`** — one dev line
-  per supported PHP minor, resolved by Composer to match the running PHP. Those are
-  development branches, so the root `composer.json` also carries
-  `"minimum-stability": "dev"` with `"prefer-stable": true` — Composer resolves
-  development stability only at the root level, so consumers need the same pair.
+- `lisachenko/z-engine` is required as **`~8.4.2 || ~8.5.0`** — one **stable** release
+  line per supported PHP minor, resolved by Composer to match the running PHP. The
+  tilde is deliberate: it admits patch releases within a line (`8.4.3`, `8.5.1`) but
+  never the next minor line, which would be built for a PHP this package does not
+  claim to support.
+- The root `composer.json` no longer carries `"minimum-stability": "dev"` /
+  `"prefer-stable": true` — nothing in `require` is a development branch any more,
+  and consumers no longer need those flags to install this package's dependencies.
 - PHP stays at `^8.4`, in lockstep with the set of z-engine lines this package
   tracks: a new PHP minor is added here only together with the z-engine line built
   for it, and never one without the other.
-- When z-engine ships stable releases for the supported minors, the constraint and
-  the root stability flags should be tightened in a single change.
 - **System libraries are never Composer requirements.** OpenBLAS, CLBlast and an
   OpenCL runtime are optional, discovered at runtime by the drivers that need them,
   and listed under `suggest`. The package must install and its suite must pass — with

@@ -3,7 +3,6 @@ Matrix arithmetic defaults to automatic backend routing with pure PHP always ava
 --INI--
 ffi.enable=1
 opcache.jit=off
-error_reporting=E_ALL & ~E_DEPRECATED
 --ENV--
 NATIVE_PHP_MATRIX_BACKEND=
 --FILE--
