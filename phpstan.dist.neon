@@ -38,11 +38,7 @@ parameters:
         -
             identifier: assign.propertyType
             path: src/Matrix.php
-        # FFI::new() is callable statically, although the stubs declare it as an instance method, and the single
-        # cell accessors of the buffer helper index a CData like the C array it is
-        -
-            identifier: method.staticCall
-            path: src/Backend/Float64Buffer.php
+        # The single cell accessors of the buffer helper index a CData like the C array it is
         -
             identifier: return.type
             path: src/Backend/Float64Buffer.php

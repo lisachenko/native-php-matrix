@@ -22,11 +22,12 @@ use FFI\CData;
  * read without a conversion in between. Keeping matrices in that shape from the moment they are constructed is
  * what removes the pack/unpack step that used to be charged to every single operation.
  *
- * The buffers are allocated through the plain `FFI::new()`, not through a driver's own binding, on purpose: a
- * `double` is a `double` in every FFI type context, so a buffer allocated here is accepted by the CBLAS entry
- * points of one driver and by the OpenCL transfer calls of another, and the pure-PHP driver — which loads no
- * library at all — can allocate its results the same way. The allocation is owned by PHP, so it is released with
- * the handle and no matrix ever frees host memory by hand.
+ * The buffers are allocated through a bare `FFI::cdef()` scope of their own, not through a driver's binding, on
+ * purpose: a `double` is a `double` in every FFI type context, so a buffer allocated here is accepted by the CBLAS
+ * entry points of one driver and by the OpenCL transfer calls of another, and the pure-PHP driver — which loads no
+ * library at all — can allocate its results the same way. The scope declares nothing and binds no library; it
+ * exists because calling `FFI::new()` statically is deprecated since PHP 8.3. The allocation is owned by PHP, so
+ * it is released with the handle and no matrix ever frees host memory by hand.
  */
 final class Float64Buffer
 {
@@ -34,6 +35,11 @@ final class Float64Buffer
      * Size of a single cell in bytes, resolved once from the running platform rather than assumed
      */
     private static ?int $cellSize = null;
+
+    /**
+     * Empty FFI scope the buffers are allocated from, created on first use
+     */
+    private static ?FFI $scope = null;
 
     /**
      * Allocates an owned, zero-filled buffer of float64 cells
@@ -48,7 +54,7 @@ final class Float64Buffer
      */
     public static function allocate(int $count): CData
     {
-        return FFI::new('double[' . $count . ']');
+        return self::scope()->new('double[' . $count . ']');
     }
 
     /**
@@ -124,9 +130,19 @@ final class Float64Buffer
      */
     public static function bytes(int $count): int
     {
-        self::$cellSize ??= FFI::sizeof(FFI::new('double'));
+        self::$cellSize ??= FFI::sizeof(self::scope()->new('double'));
 
         /** @var positive-int */
         return $count * self::$cellSize;
+    }
+
+    /**
+     * Returns the empty FFI scope buffers are allocated from
+     *
+     * An empty `FFI::cdef()` still knows every built-in C type, which is all a `double[n]` allocation needs.
+     */
+    private static function scope(): FFI
+    {
+        return self::$scope ??= FFI::cdef();
     }
 }
