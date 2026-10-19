@@ -35,7 +35,7 @@ The trick is [lisachenko/z-engine](https://github.com/lisachenko/z-engine), whic
 | ➗ | **Scalar division** | `$a / 2` |
 | 🔺 | **Scalar exponentiation** — element-wise power | `$a ** 2` |
 | 🟰 | **Equality** — strict element-wise comparison | `$a == $b`, `$a != $b` |
-| 🧬 | **float64 storage** — cells live in a native `double[]`, not a PHP array | `new Matrix([[1, 2]])` |
+| 🧬 | **float64 storage** — a native `double[]` for the accelerated drivers, PHP float arrays for the interpreter | `new Matrix([[1, 2]])` |
 
 Every operation returns a **new** `Matrix`; the class is `final` and nothing is ever mutated in place. The constructor validates that you passed a rectangular list of rows holding only `int`/`float` cells and raises a catchable `InvalidArgumentException` when it does not.
 
@@ -43,7 +43,12 @@ Operator-level failures are a different story, and it is worth being blunt about
 
 ### Cells are float64
 
-A `Matrix` does not hold an array of rows. It owns one contiguous, row-major `double[rows * columns]` allocation — the exact shape a BLAS kernel or an OpenCL buffer wants — so an operator can hand its operands to a driver as raw pointers, with nothing packed on the way in and nothing unpacked on the way out.
+Every cell is a double, whatever you passed in and whichever driver computes. *Where* those doubles live follows the driver:
+
+- under an accelerated driver a `Matrix` owns one contiguous, row-major `double[rows * columns]` allocation — the exact shape a BLAS kernel or an OpenCL buffer wants — so an operator hands its operands to the driver as raw pointers, with nothing packed on the way in and nothing unpacked on the way out;
+- under the pure-PHP driver it keeps a list of rows of PHP floats, which the interpreter walks two to three times faster than it walks `FFI\CData`.
+
+The form is chosen once, by the constructor, from the driver active at that moment. A matrix built before a switch to another driver still works with it: its cells are converted once for that operation, in bulk, and the result is stored in the form of the driver that computed it.
 
 Integers are accepted as input and stored as the doubles they convert to, which is what `numpy.array([[1, 2]])` does when it reports `dtype=float64`:
 
@@ -53,19 +58,19 @@ $m->toArray();                         // [[1.0, 2.0], [3.0, 4.0]] — ints in, 
 echo $m;                               // [1, 2] / [3, 4] — integral floats still print without decimals
 ```
 
-So there is one cell type and one set of results, whichever driver computed them. Equality is a bit-exact `memcmp` over the two buffers rather than a loop.
+So there is one cell type and one set of results, whichever driver computed them and whichever form holds them. Equality is bit-exact in every form: a `memcmp` over two buffers, the packed doubles of each row for two arrays.
 
 ## ⚡ Acceleration
 
-The operators are the interesting part; the arithmetic underneath them is now interchangeable. `Matrix` asks a registry which **driver** should carry out an operation and hands it the operand buffers themselves — validation, dimensions and object identity never leave the class. Three drivers ship with the package:
+The operators are the interesting part; the arithmetic underneath them is now interchangeable. `Matrix` asks a registry which **driver** should carry out an operation and hands it the operands in the storage that driver declares — validation, dimensions and object identity never leave the class. Three drivers ship with the package:
 
 | Driver | Runs on | Uses | Notes |
 |---|---|---|---|
-| `php` | the interpreter | ordinary PHP loops over the buffer | Always available, needs no shared library |
+| `php` | the interpreter | the original `foreach` loops over PHP float arrays | Always available, needs no shared library |
 | `blas` | CPU | OpenBLAS `cblas_dgemm` / `cblas_daxpy` / `cblas_dscal` over FFI | Double precision, needs the OpenBLAS shared library |
 | `clblast` | GPU | [CLBlast](https://github.com/CNugteren/CLBlast) on OpenCL | NVIDIA, AMD, Intel — including laptop iGPUs — or the CPU through PoCL |
 
-Same interface for everyone else: `cuBLAS`, a `ggml` driver for the Vulkan route, and Metal are all a `BackendInterface` implementation away — **PRs welcome**.
+Same interface for everyone else: `cuBLAS`, a `ggml` driver for the Vulkan route, and Metal are all a `BufferBackendInterface` implementation away — or an `ArrayBackendInterface` one, for a driver that computes on PHP arrays. **PRs welcome**.
 
 ### Choosing a driver
 
@@ -103,7 +108,7 @@ brew install openblas clblast
 
 ### The rule worth knowing
 
-**`auto` is deliberately boring.** It picks OpenBLAS whenever OpenBLAS is loadable, for *every* operation, and falls back to the pure-PHP driver when it is not. It never selects a GPU on your behalf — moving data across a bus is a decision, not a default. If an accelerated driver fails mid-operation, `auto` recomputes in pure PHP rather than taking down the request.
+**`auto` is deliberately boring.** It picks OpenBLAS whenever OpenBLAS is loadable, for *every* operation, on matrices stored as native buffers, and falls back to the pure-PHP driver on PHP arrays when it is not. It never selects a GPU on your behalf — moving data across a bus is a decision, not a default. If an accelerated driver fails mid-operation, `auto` recomputes in pure PHP rather than taking down the request.
 
 That rule used to have two exceptions. Both are gone: there are no integer semantics left to protect, and no marshalling cost that could make an element-wise operation cheaper in the interpreter.
 
@@ -114,6 +119,8 @@ For web SAPIs, set `OPENBLAS_NUM_THREADS=1`: an OpenBLAS thread pool per PHP-FPM
 It did not always. When a matrix was a PHP array, every operation had to copy its cells into a buffer and read the result back, and that overhead was proportional to the number of cells while the gain was proportional to the work. Multiplication does O(n³) work over O(n²) cells and could absorb it; element-wise operations do O(n²) work over O(n²) cells and could not, so `+`, `-` and scaling were genuinely *slower* accelerated than interpreted.
 
 Storing cells in the buffer removes that overhead rather than amortising it. `cblas_daxpy` is now called on the memory the matrices already occupy, so element-wise operations are simply a kernel call and win too — see the numbers below.
+
+The same reasoning, applied the other way round, is why the pure-PHP driver keeps arrays. A buffer is the right storage for a kernel and the wrong one for the interpreter: every `FFI\CData` cell access goes through FFI's type machinery, which made the interpreted loops two to three times slower when they had to walk buffers. So storage follows the driver, and each one computes on the form it reads fastest. The only conversion left is the one a driver switch makes unavoidable, for the matrices built before it.
 
 ## 🤖 Built for the AI/ML era
 
@@ -137,26 +144,26 @@ Matrix multiplication — the operation inference actually spends its time in:
 
 | Operation | Size | `php` | `blas` | `clblast` | `blas` speed-up | `clblast` speed-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| Multiplication `$a * $b` | 64×64 | 10.71 ms (0.0 GFLOP/s) | 0.06 ms (8.8 GFLOP/s) | 0.75 ms (0.7 GFLOP/s) | ×180.7 | ×14.2 |
-| Multiplication `$a * $b` | 128×128 | 83.63 ms (0.1 GFLOP/s) | 0.15 ms (27.9 GFLOP/s) | 1.31 ms (3.2 GFLOP/s) | ×557.2 | ×63.8 |
-| Multiplication `$a * $b` | 256×256 | 670.35 ms (0.1 GFLOP/s) | 0.46 ms (73.6 GFLOP/s) | 3.47 ms (9.7 GFLOP/s) | ×1,471.3 | ×193.0 |
-| Multiplication `$a * $b` | 512×512 | 5,413.33 ms (0.0 GFLOP/s) | 3.59 ms (74.8 GFLOP/s) | 21.76 ms (12.3 GFLOP/s) | ×1,508.2 | ×248.7 |
-| Multiplication `$a * $b` | 1024×1024 | 43,561.10 ms (0.0 GFLOP/s) | 22.67 ms (94.7 GFLOP/s) | 159.40 ms (13.5 GFLOP/s) | ×1,921.4 | ×273.3 |
+| Multiplication `$a * $b` | 64×64 | 6.42 ms (0.1 GFLOP/s) | 0.04 ms (12.6 GFLOP/s) | 0.46 ms (1.1 GFLOP/s) | ×154.2 | ×13.9 |
+| Multiplication `$a * $b` | 128×128 | 31.41 ms (0.1 GFLOP/s) | 0.08 ms (50.5 GFLOP/s) | 0.71 ms (5.9 GFLOP/s) | ×378.5 | ×44.0 |
+| Multiplication `$a * $b` | 256×256 | 245.67 ms (0.1 GFLOP/s) | 0.32 ms (105.5 GFLOP/s) | 2.11 ms (15.9 GFLOP/s) | ×772.2 | ×116.6 |
+| Multiplication `$a * $b` | 512×512 | 2,007.76 ms (0.1 GFLOP/s) | 2.35 ms (114.0 GFLOP/s) | 17.41 ms (15.4 GFLOP/s) | ×852.9 | ×115.3 |
+| Multiplication `$a * $b` | 1024×1024 | 15,608.82 ms (0.1 GFLOP/s) | 19.64 ms (109.4 GFLOP/s) | 124.43 ms (17.3 GFLOP/s) | ×794.8 | ×125.4 |
 
-The `blas` column is now the kernel and almost nothing else — 1024×1024 went from 113.61 ms to 22.67 ms once the operands stopped being packed and unpacked around it. The `php` column moved the opposite way for the same reason, and the ratios should be read with that in mind: they are large partly because the interpreted fallback got slower.
+The `blas` column is the kernel and almost nothing else: the operands are handed over as the buffers they are stored in, and the buffer the kernel writes becomes the result. The `php` column is the original array loops, walking PHP arrays — so every speed-up here is measured against the interpreter at its best, not against an interpreter slowed down by FFI.
 
 Element-wise operations, which used to be the honest caveat of this table and are not one any more — with the cells already in the buffer, `cblas_daxpy` is called on the memory the matrices occupy and there is nothing left to marshal:
 
 | Operation | Size | `php` | `blas` | `clblast` | `blas` speed-up | `clblast` speed-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| Addition `$a + $b` | 64×64 | 0.21 ms | 0.05 ms | 0.71 ms | ×4.0 | ×0.3 |
-| Addition `$a + $b` | 512×512 | 13.14 ms | 2.15 ms | 7.97 ms | ×6.1 | ×1.6 |
-| Scaling `$a * 2.5` | 64×64 | 0.16 ms | 0.07 ms | 0.53 ms | ×2.3 | ×0.3 |
-| Scaling `$a * 2.5` | 512×512 | 10.23 ms | 1.82 ms | 2.92 ms | ×5.6 | ×3.5 |
+| Addition `$a + $b` | 64×64 | 0.10 ms | 0.03 ms | 0.50 ms | ×3.2 | ×0.2 |
+| Addition `$a + $b` | 512×512 | 4.98 ms | 1.27 ms | 5.53 ms | ×3.9 | ×0.9 |
+| Scaling `$a * 2.5` | 64×64 | 0.08 ms | 0.04 ms | 0.45 ms | ×1.8 | ×0.2 |
+| Scaling `$a * 2.5` | 512×512 | 3.39 ms | 1.15 ms | 1.96 ms | ×2.9 | ×1.7 |
 
-<sub>PHP 8.5.9 on Linux x86_64, Intel® Xeon® @ 2.80 GHz (shared cloud container), OpenBLAS 0.3.26, CLBlast 1.6.2 on PoCL 5.0 with `NATIVE_PHP_MATRIX_CL_DEVICE=cpu`. Median of 5 runs, one warm-up discarded, timing the whole PHP-level operation from operator to finished `Matrix`.</sub>
+<sub>PHP 8.5.11 on Linux x86_64, Intel® Xeon® @ 2.10 GHz (shared cloud container), OpenBLAS 0.3.26, CLBlast 1.6.2 on PoCL 5.0 with `NATIVE_PHP_MATRIX_CL_DEVICE=cpu`. Median of 5 runs, one warm-up discarded, timing the whole PHP-level operation from operator to finished `Matrix`.</sub>
 
-For scale, the same 512×512 addition on the previous array-backed storage took 25.27 ms on `blas` and 8.41 ms on `php`: moving the cells into a native buffer made the accelerated path about **twelve times** faster and turned a ×0.3 penalty into a ×6.1 win. The `php` column moved the other way — walking `FFI\CData` costs more than walking a PHP array — which is the trade this design makes deliberately: the fallback driver gets slower so that every other driver stops paying for conversion.
+Storage follows the driver, and these tables show both halves of why. Buffers are what make the accelerated columns a kernel call with nothing to marshal. Arrays are what keep the `php` column fast: when every matrix was a buffer and the interpreter had to walk `FFI\CData`, the same container measured 4,146 ms for a 512×512 multiplication, 9.46 ms for the addition and 6.76 ms for the scaling — against 1,849 ms, 5.12 ms and 3.43 ms with the array loops back, about **twice as fast** across the board. Neither side pays for the other: the only conversion is the one a driver switch forces on the matrices built before it.
 
 **These numbers are from a shared container without a GPU** — the `clblast` column is CLBlast running on the CPU through PoCL, which is a portability proof, not a GPU benchmark. On real hardware the GPU column is a different story, and the OpenBLAS column depends heavily on core count. Measure your own:
 
@@ -171,7 +178,7 @@ Three moving parts, in order:
 
 1. **`bootstrap.php`** is registered in Composer's `files` autoload, so it runs the moment you `require vendor/autoload.php`. It calls `ZEngine\Core::init()`, which validates that the FFI struct definitions match the exact PHP build you are running.
 2. It then calls `installExtensionHandlers()` on `ZEngine\Reflection\ReflectionClass` for `Matrix`, wiring the class's `create_object`, `do_operation` and `compare` slots to the engine trampolines. Order matters — `create_object` allocates the memory the other handlers live in.
-3. **`Matrix::__doOperation()`** and **`Matrix::__compare()`** are static hooks. The engine hands them a `DoOperationHook` / `CompareValuesHook` describing the opcode and both operands; they dispatch to ordinary, boring methods (`sum()`, `subtract()`, `multiply()`, `multiplyByScalar()`, `divideByScalar()`, `powByScalar()`, `equals()`), which ask the backend registry which driver should do the arithmetic and pass it the operand buffers.
+3. **`Matrix::__doOperation()`** and **`Matrix::__compare()`** are static hooks. The engine hands them a `DoOperationHook` / `CompareValuesHook` describing the opcode and both operands; they dispatch to ordinary, boring methods (`sum()`, `subtract()`, `multiply()`, `multiplyByScalar()`, `divideByScalar()`, `powByScalar()`, `equals()`), which ask the backend registry which driver should do the arithmetic and pass it the operands in the storage form it declares.
 
 The maths is plain PHP — or plain BLAS, if you asked for it. The magic is only in getting the engine to call it.
 

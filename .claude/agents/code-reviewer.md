@@ -43,14 +43,20 @@ Review against the checklist below, in this order of severity.
 
 ## 3. float64 storage honesty (blocking)
 
-`Matrix` has no generic parameter: cells are `float`, stored in a native
-`double[rows * columns]` buffer.
+`Matrix` has no generic parameter: cells are `float`, stored in the form of the driver
+active when the matrix was built — a native `double[rows * columns]` buffer for a
+`BufferBackendInterface` driver, a list of rows of PHP floats for an `ArrayBackendInterface`
+one.
 
 - Flag any reintroduced `Matrix<int>` / `Matrix<T>` annotation, or any signature claiming a
   method returns integer cells. An integer literal in the constructor is input syntax only.
-- Flag userland cast loops over cells. The constructor writing an int into a double slot is
-  the only conversion there should be; anything else is the loop the buffers exist to remove.
-- Drivers must treat their operand buffers as read-only and return a freshly allocated one.
+- Flag userland cast loops over cells. The constructor converting each cell while it
+  validates it is the only conversion there should be; an array driver that lets an int into
+  a result row (an accumulator seeded with `0`) breaks the float64 promise.
+- Flag storage conversions on the hot path. Converting between buffer and rows is only for an
+  operand built under another driver, and only through `Float64Buffer::fromRows()` /
+  `toRows()` — never a PHP loop over the cells, never for operands that already match.
+- Drivers must treat their operands as read-only and return freshly computed cells.
   Returning an operand, or writing into one, is a blocking finding.
 - New code must be clean at PHPStan level max; suppressing with `@phpstan-ignore` needs an
   inline justification.

@@ -24,9 +24,10 @@ require __DIR__ . '/../vendor/autoload.php';
  * Compares the matrix backends on the operations that dominate machine learning workloads
  *
  * The point of this script is not to prove that native code is faster than an interpreter — it is, by orders of
- * magnitude — but to show where the crossover sits for *this* library, packing and unpacking included. Every
- * measurement therefore times the whole PHP-level operation: converting the rows into a buffer, calling the
- * kernel, reading the result back and validating it into a new Matrix. That is what a caller actually pays.
+ * magnitude — but to show what a caller of *this* library actually pays. Every measurement therefore times the
+ * whole PHP-level operation, from the operator hook through the registry and the driver to a finished Matrix.
+ * The operands are built after the driver is selected, so each driver computes on the storage it declares —
+ * native buffers for the accelerated ones, PHP arrays for the interpreter — as a real application's would.
  */
 final class Benchmark
 {

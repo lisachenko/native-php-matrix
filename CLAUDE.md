@@ -178,6 +178,11 @@ Rules for a new test:
   file that asserts the *default* selection pins `NATIVE_PHP_MATRIX_BACKEND=` (empty,
   which means "unset") in its `--ENV--`, so it keeps asserting the default even when
   the whole suite is run with a backend pinned.
+- **A test whose output exposes the storage pins a backend.** Storage follows the
+  driver, so what `var_dump($matrix)` or a scope-bound property read shows depends on
+  which driver was active when the matrix was built — and under `auto`, on whether
+  OpenBLAS happens to be installed. Such a test pins one in `--ENV--`
+  (`testKeepsDefaultDebugOutput.phpt` pins `php`) or selects drivers explicitly.
 - `failOnSkipped="true"` is set, so a skip fails the suite. That is deliberate: CI
   installs every acceleration library, so a skip there means a broken image. Locally,
   without the libraries, run
@@ -197,8 +202,9 @@ on runners that have no GPU; the `gpu-path` job pins
 ## Repository map
 
 ```
-src/Matrix.php               the float64 buffer, validation, dimensions, the __doOperation/__compare hooks;
-                             the arithmetic itself is delegated to a backend driver
+src/Matrix.php               the float64 cells (a buffer or PHP rows, following the driver), validation,
+                             dimensions, the __doOperation/__compare hooks; the arithmetic itself is
+                             delegated to a backend driver
 src/Backend/                 the interchangeable drivers and the registry that picks one
 tests/Functional/*.phpt      the functional suite, one behaviour per file
 tests/Functional/include/    shared SKIPIF probes and backend stubs (.inc — never collected as tests)
@@ -220,19 +226,22 @@ every operator at once.
 ## Backend architecture
 
 `Matrix` no longer does the arithmetic itself. It validates, checks dimensions, and
-asks `Backends::resolve()` which driver should compute — drivers receive the operand
-**buffers** with the dimensions alongside them and return a freshly allocated buffer.
+asks `Backends::resolve()` which driver should compute — drivers receive the operands
+in the **storage form they declare**, with the dimensions alongside them, and return
+freshly computed cells in that same form.
 
 ```
-src/Backend/BackendInterface.php             the driver contract: six operations, plus isAvailable()
-src/Backend/Backends.php                     registry, selection and the auto-routing policy
+src/Backend/BackendInterface.php             the common root: isAvailable(), and the rule to implement one storage contract
+src/Backend/BufferBackendInterface.php       six operations over row-major double[] buffers (blas, clblast, fallback)
+src/Backend/ArrayBackendInterface.php        six operations over lists of rows of PHP floats (php)
+src/Backend/Backends.php                     registry, selection, the auto-routing policy, the cached resolve()
 src/Backend/Driver.php                       string-backed enum naming the built-in drivers plus "auto"
-src/Backend/Float64Buffer.php                allocate / copy / compare the double[] blocks everything speaks
-src/Backend/PhpBackend.php                   the interpreted loops, now over buffer offsets
+src/Backend/Float64Buffer.php                allocate / copy / compare double[] blocks, and convert them to and from rows
+src/Backend/PhpBackend.php                   the original interpreted array loops, verbatim, over float rows
 src/Backend/BlasBackend.php                  OpenBLAS over FFI (CPU), called on the stored buffers
 src/Backend/ClblastBackend.php               CLBlast over OpenCL (GPU, or CPU via PoCL)
 src/Backend/AcceleratedBackendTrait.php      the pow loop, the one operation no BLAS provides
-src/Backend/FallbackBackend.php              decorator: degrade to another driver instead of failing
+src/Backend/FallbackBackend.php              decorator: recompute a failed buffer operation on the array-native php driver
 src/Backend/BackendNotAvailableException.php catchable, thrown at selection time only
 ```
 
@@ -245,19 +254,28 @@ Four rules govern this part of the codebase, and none of them is negotiable:
   `Backends::use()` and `bootFromEnvironment()`. Under `auto`, a driver that fails at
   operation time is caught by `FallbackBackend` and the result is recomputed in pure
   PHP. Catching *inside* a hook is fine; only crossing the boundary is fatal.
-- **Everything is float64.** A matrix stores `double` cells, every driver reads and
-  writes `double` cells. There is no integer path to preserve and no cast to make:
-  the constructor is the only place a value changes type, and it does so by writing
-  an int into a double slot, which FFI converts natively. Never add a userland cast
-  loop — that is exactly what the buffers exist to eliminate.
-- **Operands are read-only, results are fresh.** The buffers a driver receives are
-  the storage of matrices the caller still holds. A kernel that accumulates into an
-  argument (`daxpy`, `dscal`) must copy it into the result buffer first, with
-  `Float64Buffer::copyOf()`. Never return an operand as the result. This is also what
-  makes `FallbackBackend`'s recomputation safe.
+- **Everything is float64, and storage follows the driver.** Every cell is a double:
+  stored as a native buffer under the accelerated drivers (`BufferBackendInterface`)
+  and as PHP float arrays under the php driver (`ArrayBackendInterface`). The
+  constructor picks the form of the driver active at that moment and is the only
+  place a value changes type — it writes an int into a double slot, which FFI
+  converts natively, or appends it to its row as `(float)`, in the same pass that
+  validates it. Never add a cast loop anywhere else, and never let an int into a
+  result row (an accumulator starts at `0.0`). Storage converts only at driver-switch
+  boundaries: an operand built under another driver is converted once for that
+  operation, in bulk (`Float64Buffer::fromRows()` / `toRows()`), never cell by cell in
+  PHP and never on the path of an operation whose operands already match.
+- **Operands are read-only, results are fresh.** The operands a driver receives are
+  the storage of matrices the caller still holds. A buffer kernel that accumulates
+  into an argument (`daxpy`, `dscal`) must copy it into the result buffer first, with
+  `Float64Buffer::copyOf()`. Never return an operand as the result. Arrays are copied
+  on write by PHP, but the rule is the same. This is also what makes
+  `FallbackBackend`'s recomputation safe.
 - **Auto-routing uses BLAS for everything, never a GPU.** `auto` picks the OpenBLAS
   driver whenever it probes available, for every operation including element-wise
-  ones, and the pure-PHP driver otherwise. A GPU is never chosen automatically.
+  ones, and the pure-PHP driver otherwise. A GPU is never chosen automatically. The
+  answer is cached by `Backends::resolve()` until the selection or the registry
+  changes, because the constructor asks it as well as every operator.
 
 An availability probe performs a real 1×1 operation, so it cannot disagree with what
 an operation would do a moment later. Probes are cached per process.
