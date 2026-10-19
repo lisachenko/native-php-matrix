@@ -10,8 +10,9 @@ You write `.phpt` functional tests for `lisachenko/native-php-matrix`. Tests liv
 ## Before writing
 
 Read `src/Matrix.php` to confirm the exact behaviour you are covering — which operand
-orders `__doOperation` accepts, which exception type is thrown, and whether the result
-elements come out as `int` or `float`. Read one or two existing tests in
+orders `__doOperation` accepts and which exception type is thrown. Matrix cells are
+float64 and nothing else, so every cell in a result dumps as `float(...)`, whichever
+driver computed it and whatever literals went in. Read one or two existing tests in
 `tests/Functional/` for the house style. Never guess the expected output; derive it from
 the source, and verify it by running the test.
 
@@ -40,11 +41,11 @@ array(1) {
   [0]=>
   array(3) {
     [0]=>
-    int(2)
+    float(2)
     [1]=>
-    int(4)
+    float(4)
     [2]=>
-    int(6)
+    float(6)
   }
 }
 ```
@@ -73,9 +74,16 @@ array(1) {
 - **`--EXPECT--` over `--EXPECTREGEX--`.** Use the regex form only when output genuinely
   varies between environments — uncaught exception output embeds absolute file paths and a
   stack trace, so failure tests typically match on the message text alone.
-- **Types matter.** `var_dump()` distinguishes `int(1)` from `float(1)`. PHP's `/` returns
-  an `int` only when the division is exact; `**` with a negative or fractional exponent
-  returns `float`. Get this right or the test is worthless.
+- **Every cell expectation is a float.** `var_dump()` distinguishes `int(1)` from
+  `float(1)`, and matrix cells are always the latter — integer literals in the
+  constructor are input syntax, not a cell type. A test asserting `int(...)` for a
+  matrix cell is wrong by construction. Use integral-valued fixtures so the printed
+  form stays exact (`float(6)`, not `float(6.0000000000000004)`) under every driver.
+- **A test whose output exposes the storage pins a backend.** Storage follows the
+  active driver (PHP rows under `php`, a native buffer under `blas`/`clblast`), so
+  anything that dumps the object itself — rather than `toArray()` — must pin
+  `NATIVE_PHP_MATRIX_BACKEND` in `--ENV--` or its expectation depends on which
+  libraries the machine happens to have.
 - Keep matrices small — 1×3, 2×2, 3×1. The test documents a behaviour; it is not a
   benchmark.
 
