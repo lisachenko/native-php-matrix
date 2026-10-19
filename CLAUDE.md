@@ -216,7 +216,7 @@ bootstrap.php                Core::init(), installExtensionHandlers() on Matrix,
 phpunit.xml.dist             PHPUnit 12 config (suite points at tests/, suffix .phpt)
 phpstan.dist.neon            static analysis config, level max
 .php-cs-fixer.dist.php       coding standards config (PER-CS2.0)
-.github/workflows/ci.yml     jobs: tests, gpu-path, static-analysis, coding-standards — PHP 8.4 and 8.5
+.github/workflows/ci.yml     jobs: tests, gpu-path, static-analysis, coding-standards — PHP 8.4, 8.5 and 8.6
 .github/dependabot.yml       composer daily, github-actions weekly
 ```
 

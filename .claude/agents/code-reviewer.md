@@ -44,7 +44,7 @@ Review against the checklist below, in this order of severity.
   (`>=8.4`, a `^8.4` z-engine constraint that would span future lines), or bypasses
   `Core::init()`'s version guard, is rejected outright. Offsets into engine structures are
   minor-version specific; loosening the pin trades a clear error for memory corruption.
-- CI must run on PHP 8.4 and 8.5 with `ffi.enable=1` and `opcache.jit=off`.
+- CI must run on PHP 8.4, 8.5 and 8.6 with `ffi.enable=1` and `opcache.jit=off`.
 
 ## 3. float64 storage honesty (blocking)
 

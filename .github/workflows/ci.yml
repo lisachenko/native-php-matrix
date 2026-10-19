@@ -9,9 +9,13 @@ on:
 permissions:
   contents: read
 
-# z-engine tracks one PHP minor per release line; the "~8.4.2 || ~8.5.0" constraint
-# lets Composer resolve the stable line matching each runner's PHP, so the suite
-# runs on PHP 8.4 and 8.5 in parallel.
+# z-engine tracks one PHP minor per release line; the "~8.4.2 || ~8.5.0 || 8.6.x-dev"
+# constraint lets Composer resolve the line matching each runner's PHP, so the suite
+# runs on PHP 8.4, 8.5 and 8.6 in parallel. 8.4 and 8.5 resolve stable tags; 8.6
+# resolves z-engine's master (branch-aliased 8.6.x-dev) until z-engine tags 8.6. The
+# 8.6 legs are set up exactly as z-engine's own CI sets up its 8.6 line (plain
+# php-version '8.6', which setup-php serves pre-release builds for too) and, like
+# there, they are required, not allowed to fail.
 jobs:
   tests:
     name: Tests (PHP ${{ matrix.php }})
@@ -19,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.4', '8.5']
+        php: ['8.4', '8.5', '8.6']
     # The suite fails on skipped tests, so every acceleration library is installed here: a skipped backend test
     # means a broken environment rather than an absent GPU. PoCL provides the OpenCL device, on the CPU
     env:
@@ -60,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.4', '8.5']
+        php: ['8.4', '8.5', '8.6']
     # The device code path gets its own red/green signal, on the CPU device PoCL provides, so a broken GPU driver
     # is visible without reading through the rest of the suite. Now that matrix cells are float64 whichever driver
     # computes them, pinning an accelerated backend no longer changes any expectation, so this job runs the entire
@@ -96,7 +100,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.4', '8.5']
+        php: ['8.4', '8.5', '8.6']
     steps:
       - uses: actions/checkout@v7
       - uses: shivammathur/setup-php@v2
