@@ -32,9 +32,14 @@ Review against the checklist below, in this order of severity.
 
 ## 2. Version pins (blocking)
 
-- `composer.json` must keep `"php": "^8.4"` and `"lisachenko/z-engine": "~8.4.2 || ~8.5.0"`
-  — one stable z-engine line per supported PHP minor, resolved by Composer against the
-  running PHP.
+- `composer.json` must keep `"php": "^8.4"` and
+  `"lisachenko/z-engine": "~8.4.2 || ~8.5.0 || 8.6.x-dev"` — one z-engine line per
+  supported PHP minor, resolved by Composer against the running PHP: stable tags for 8.4
+  and 8.5, the `8.6.x-dev` development line for 8.6 until z-engine tags it (then it
+  becomes `~8.6.0` and `"prefer-stable": true` is dropped in the same change). The root
+  `"prefer-stable": true` is what keeps 8.4/8.5 on their tags while the dev flag is
+  present; a diff that removes it before then, or adds `"minimum-stability": "dev"`, is
+  rejected.
 - Any diff that widens either constraint beyond the minors z-engine has definitions for
   (`>=8.4`, a `^8.4` z-engine constraint that would span future lines), or bypasses
   `Core::init()`'s version guard, is rejected outright. Offsets into engine structures are

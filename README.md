@@ -8,7 +8,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/lisachenko/native-php-matrix/ci.yml?branch=master&label=CI)](https://github.com/lisachenko/native-php-matrix/actions/workflows/ci.yml)
 [![GitHub release](https://img.shields.io/github/release/lisachenko/native-php-matrix.svg)](https://github.com/lisachenko/native-php-matrix/releases/latest)
-[![PHP Version](https://img.shields.io/badge/php-8.4%20%7C%208.5-8892BF.svg)](https://php.net/)
+[![PHP Version](https://img.shields.io/badge/php-8.4%20%7C%208.5%20%7C%208.6-8892BF.svg)](https://php.net/)
 [![License](https://img.shields.io/packagist/l/lisachenko/native-php-matrix.svg)](https://packagist.org/packages/lisachenko/native-php-matrix)
 [![PHPStan](https://img.shields.io/badge/PHPStan-level%20max-brightgreen.svg)](https://phpstan.org/)
 
@@ -184,10 +184,11 @@ The maths is plain PHP — or plain BLAS, if you asked for it. The magic is only
 
 ## Requirements
 
-- **PHP `^8.4`** — 8.4 and 8.5 are supported in parallel. Z-Engine reads engine structures by byte offset and those offsets change on every PHP minor release, so each minor rides its own Z-Engine line; `Core::init()` refuses to boot on a mismatch rather than corrupting memory.
+- **PHP `^8.4`** — 8.4, 8.5 and 8.6 are supported in parallel. Z-Engine reads engine structures by byte offset and those offsets change on every PHP minor release, so each minor rides its own Z-Engine line; `Core::init()` refuses to boot on a mismatch rather than corrupting memory.
 - **`ext-ffi` enabled**, with `ffi.enable=1` for CLI usage.
 - **x64, non-thread-safe (NTS)** build — the same platform limitations as [Z-Engine](https://github.com/lisachenko/z-engine#requirements--support-matrix).
-- The **matching Z-Engine minor release line**. Composer resolves it for you from the `~8.4.2 || ~8.5.0` constraint; mixing a Z-Engine built for another minor is not a configuration choice, it is undefined behaviour.
+- The **matching Z-Engine minor release line**. Composer resolves it for you from the `~8.4.2 || ~8.5.0 || 8.6.x-dev` constraint; mixing a Z-Engine built for another minor is not a configuration choice, it is undefined behaviour.
+- **On PHP 8.6 only:** Z-Engine has no stable 8.6 tag yet, so 8.6 rides its `8.6.x-dev` development line, and your project must allow that line at its root (see [Installation](#installation)).
 
 ## Installation
 
@@ -195,7 +196,15 @@ The maths is plain PHP — or plain BLAS, if you asked for it. The magic is only
 composer require lisachenko/native-php-matrix:dev-master
 ```
 
-This package requires Z-Engine as `~8.4.2 || ~8.5.0` — z-engine minors track PHP minors and are not interchangeable, so Composer resolves the release line matching your PHP automatically (`8.4.x` on PHP 8.4, `8.5.x` on PHP 8.5). Both are **stable tags**, so no `minimum-stability` tweak is needed for them.
+This package requires Z-Engine as `~8.4.2 || ~8.5.0 || 8.6.x-dev` — z-engine minors track PHP minors and are not interchangeable, so Composer resolves the line matching your PHP automatically (`8.4.x` on PHP 8.4, `8.5.x` on PHP 8.5, `8.6.x-dev` on PHP 8.6). The 8.4 and 8.5 lines are **stable tags**, so no `minimum-stability` tweak is needed for them.
+
+**On PHP 8.6**, Z-Engine is still a development branch until it tags 8.6, and Composer only honours stability flags written in *your* root `composer.json` — not the ones a dependency declares. Require the line explicitly alongside this package:
+
+```bash
+composer require lisachenko/native-php-matrix:dev-master lisachenko/z-engine:8.6.x-dev
+```
+
+(or set `"minimum-stability": "dev"` with `"prefer-stable": true` in your project). Once Z-Engine tags 8.6, this package tightens its constraint to that tag and the extra requirement can be dropped.
 
 native-php-matrix itself is not tagged yet, which is why the command above asks for `dev-master`; that one dev constraint is explicit, so Composer accepts it without a root stability change. Once a native-php-matrix release is tagged, this collapses to a plain `composer require lisachenko/native-php-matrix`.
 
