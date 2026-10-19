@@ -12,30 +12,13 @@ declare(strict_types=1);
 
 namespace Lisachenko\NativePhpMatrix;
 
-use function array_column;
-use function array_filter;
-
-use const ARRAY_FILTER_USE_KEY;
-
-use function array_is_list;
-use function array_keys;
-use function count;
-use function get_mangled_object_vars;
-use function implode;
-
+use FFI\CData;
 use InvalidArgumentException;
-
-use function is_array;
-use function is_float;
-use function is_int;
-use function is_numeric;
-use function is_string;
-
+use Lisachenko\NativePhpMatrix\Backend\ArrayBackendInterface;
+use Lisachenko\NativePhpMatrix\Backend\Backends;
+use Lisachenko\NativePhpMatrix\Backend\Float64Buffer;
 use LogicException;
-
-use function sprintf;
-use function str_starts_with;
-
+use ReflectionClass;
 use ZEngine\ClassExtension\Hook\CastObjectHook;
 use ZEngine\ClassExtension\Hook\CastType;
 use ZEngine\ClassExtension\Hook\CompareValuesHook;
@@ -53,11 +36,20 @@ use ZEngine\System\OpCode;
 /**
  * Simple class Matrix powered by custom operator handlers
  *
- * Note about the generic parameter: arithmetic honestly widens the cell type. Even for a `Matrix<int>` a division
- * or an exponentiation may produce floats, therefore every operation returns a `Matrix<int|float>` instead of
- * pretending that the original `T` is preserved.
+ * Cells are float64, always. Integers are accepted as input and stored as the doubles they convert to, the way
+ * `numpy.array([[1, 2]])` yields `dtype=float64` — so `new Matrix([[1, 2]])->toArray()` gives `[[1.0, 2.0]]`, and
+ * every operation returns floats whichever driver computed it.
  *
- * @template-covariant T of int|float
+ * Where those doubles live follows the driver. Under an accelerated driver a matrix owns a single, contiguous,
+ * row-major `double[rows * columns]` allocation, which a BLAS kernel or an OpenCL transfer reads as the raw
+ * pointer it is: nothing is packed on the way in, nothing is unpacked on the way out, and the buffer a kernel
+ * writes becomes the storage of the matrix the operator returns. Under the pure-PHP driver a matrix keeps a list of
+ * rows of PHP floats instead, because the interpreter walks an array two to three times faster than it walks
+ * `FFI\CData`. The form is chosen once, by the constructor, from the driver active at that moment.
+ *
+ * An operand whose form does not match the driver of an operation — it was built before a switch to another
+ * driver — is converted once for that operation, in bulk, and the result is stored in the form of the driver that
+ * computed it. Observable behaviour is the same in both forms: the cells are the same doubles.
  */
 final class Matrix implements
     ObjectCastInterface,
@@ -69,26 +61,57 @@ final class Matrix implements
     use ObjectCreateTrait;
 
     /**
-     * Matrix cells, stored as a list of rows
+     * Reflection used to build a matrix around cells a driver has just computed
      *
-     * @var non-empty-list<non-empty-list<T>>
+     * Resolved once for the process. Bypassing the constructor is not an optimisation trick here but the point:
+     * the cells of a computed result are already valid float64 in the right layout, and re-validating them would
+     * mean reading every one of them back into PHP.
+     *
+     * @var ReflectionClass<self>|null
      */
-    private readonly array $matrix;
+    private static ?ReflectionClass $reflection = null;
+
+    /**
+     * Cells of this matrix, row after row, as float64
+     *
+     * Either a row-major `double[rows * columns]` buffer, for the drivers that compute on native memory, or a list
+     * of rows of PHP floats, for the driver that computes in the interpreter — see the class docblock. A buffer is
+     * owned by PHP and released together with this object, which is why no matrix ever frees host memory by hand.
+     *
+     * The three properties below are written exactly once — by the constructor, or by {@see self::fromCells()}
+     * for a result a driver has just computed — and never again; nothing in this class mutates a matrix in place.
+     * They are not declared `readonly` only because that second initialisation path assigns them from a static
+     * method rather than from the constructor, which the attribute forbids.
+     *
+     * @var CData|non-empty-list<non-empty-list<float>>
+     */
+    private CData|array $cells;
 
     /**
      * Total number of rows in this matrix
+     *
+     * @var positive-int
      */
-    private readonly int $rows;
+    private int $rows;
 
     /**
      * Total number of columns in this matrix
+     *
+     * @var positive-int
      */
-    private readonly int $columns;
+    private int $columns;
 
     /**
      * Matrix constructor
      *
-     * @param non-empty-list<non-empty-list<T>> $matrix Rectangular list of rows, each one holding numeric cells
+     * Validation and conversion are the same pass, in the storage form of the active driver: each cell is checked
+     * and then either written straight into a freshly allocated buffer, where FFI performs the int-to-double
+     * conversion natively, or appended to its row as a PHP float. There is no intermediate array and no second
+     * loop over the cells in either form.
+     *
+     * @param non-empty-list<non-empty-list<int|float>> $matrix Rectangular list of rows, each one holding numeric cells
+     *
+     * @throws InvalidArgumentException When the argument is not a non-empty, rectangular list of numeric rows
      */
     public function __construct(array $matrix)
     {
@@ -99,33 +122,32 @@ final class Matrix implements
             throw new InvalidArgumentException('Matrix should be a list of rows with sequential keys, starting from 0');
         }
 
-        $columns = null;
+        $rows    = count($matrix);
+        $columns = count(self::validateRow($matrix[0], 0));
+
+        $this->rows    = $rows;
+        $this->columns = $columns;
+
+        // The registry caches its answer, so asking it for every new matrix costs a static property read
+        if (Backends::resolve() instanceof ArrayBackendInterface) {
+            $this->cells = self::validateIntoRows($matrix, $columns);
+
+            return;
+        }
+
+        $buffer = Float64Buffer::allocate($rows * $columns);
+        $offset = 0;
         foreach ($matrix as $rowIndex => $row) {
-            if (!is_array($row) || !array_is_list($row)) {
-                throw new InvalidArgumentException(
-                    sprintf('Matrix row %d should be a list of values with sequential keys, starting from 0', $rowIndex),
-                );
-            }
-            if ($row === []) {
-                throw new InvalidArgumentException('Matrix should contain at least one column');
-            }
-            if ($columns === null) {
-                $columns = count($row);
-            } elseif (count($row) !== $columns) {
-                throw new InvalidArgumentException('All matrix rows should have the same number of columns');
-            }
-            foreach ($row as $columnIndex => $value) {
-                if (!is_int($value) && !is_float($value)) {
-                    throw new InvalidArgumentException(
-                        sprintf('Matrix value at [%d][%d] should be either an int or a float', $rowIndex, $columnIndex),
-                    );
+            foreach (self::validateCells($row, $rowIndex, $columns) as $columnIndex => $cellValue) {
+                if (!is_int($cellValue) && !is_float($cellValue)) {
+                    throw self::invalidCell($rowIndex, $columnIndex);
                 }
+                // Assigning into a double cell is where an int becomes a float, natively
+                $buffer[$offset++] = $cellValue;
             }
         }
 
-        $this->matrix  = $matrix;
-        $this->rows    = count($matrix);
-        $this->columns = count($matrix[0]);
+        $this->cells = $buffer;
     }
 
     public function getRows(): int
@@ -144,21 +166,27 @@ final class Matrix implements
     }
 
     /**
-     * Returns an underlying representation of this matrix
+     * Returns the cells of this matrix as a list of rows
      *
-     * @return non-empty-list<non-empty-list<T>>
+     * A matrix stored as rows hands them out as they are — PHP copies an array on write, so the caller cannot
+     * reach the storage through it. A buffer is unpacked on demand: that is the boundary between native memory and
+     * ordinary PHP, so a caller that only wants to compute never pays for it.
+     *
+     * @return non-empty-list<non-empty-list<float>> Cells, row after row
      */
     public function toArray(): array
     {
-        return $this->matrix;
+        return $this->asRows();
     }
 
     /**
      * Performs multiplication of two matrices
      *
-     * @param self<int|float> $multiplier Right operand
+     * @param self $multiplier Right operand
      *
-     * @return self<int|float> Product of two matrices
+     * @return self Product of two matrices
+     *
+     * @throws InvalidArgumentException When the inner dimensions do not match
      */
     public function multiply(self $multiplier): self
     {
@@ -166,98 +194,99 @@ final class Matrix implements
             throw new InvalidArgumentException('Inconsistent matrix supplied');
         }
 
-        // Columns of the multiplier are extracted only once, they are reused for every row of the left operand
-        $multiplierColumns = [];
-        foreach (array_keys($multiplier->matrix[0]) as $column) {
-            $multiplierColumns[] = array_column($multiplier->matrix, $column);
+        $backend = Backends::resolve();
+        if ($backend instanceof ArrayBackendInterface) {
+            return self::fromCells(
+                $backend->multiply($this->asRows(), $multiplier->asRows(), $this->rows, $this->columns, $multiplier->columns),
+                $this->rows,
+                $multiplier->columns,
+            );
         }
 
-        $result = [];
-        foreach ($this->matrix as $rowItems) {
-            $resultRow = [];
-            foreach ($multiplierColumns as $columnItems) {
-                $cellValue = 0;
-                foreach ($rowItems as $key => $value) {
-                    $cellValue += $value * $columnItems[$key];
-                }
-
-                $resultRow[] = $cellValue;
-            }
-            $result[] = $resultRow;
-        }
-
-        return new self($result);
+        return self::fromCells(
+            $backend->multiply($this->asBuffer(), $multiplier->asBuffer(), $this->rows, $this->columns, $multiplier->columns),
+            $this->rows,
+            $multiplier->columns,
+        );
     }
 
     /**
      * Performs division by scalar value
      *
      * @param int|float $value Divider
-     *
-     * @return self<int|float>
      */
     public function divideByScalar(int|float $value): self
     {
-        $result = [];
-        foreach ($this->matrix as $row) {
-            $resultRow = [];
-            foreach ($row as $cellValue) {
-                $resultRow[] = $cellValue / $value;
-            }
-            $result[] = $resultRow;
+        $backend = Backends::resolve();
+        if ($backend instanceof ArrayBackendInterface) {
+            return self::fromCells(
+                $backend->divideByScalar($this->asRows(), (float) $value, $this->rows, $this->columns),
+                $this->rows,
+                $this->columns,
+            );
         }
 
-        return new self($result);
+        return self::fromCells(
+            $backend->divideByScalar($this->asBuffer(), (float) $value, $this->rows, $this->columns),
+            $this->rows,
+            $this->columns,
+        );
     }
 
     /**
      * Performs multiplication by scalar value
      *
      * @param int|float $value Multiplier
-     *
-     * @return self<int|float>
      */
     public function multiplyByScalar(int|float $value): self
     {
-        $result = [];
-        foreach ($this->matrix as $row) {
-            $resultRow = [];
-            foreach ($row as $cellValue) {
-                $resultRow[] = $cellValue * $value;
-            }
-            $result[] = $resultRow;
+        $backend = Backends::resolve();
+        if ($backend instanceof ArrayBackendInterface) {
+            return self::fromCells(
+                $backend->multiplyByScalar($this->asRows(), (float) $value, $this->rows, $this->columns),
+                $this->rows,
+                $this->columns,
+            );
         }
 
-        return new self($result);
+        return self::fromCells(
+            $backend->multiplyByScalar($this->asBuffer(), (float) $value, $this->rows, $this->columns),
+            $this->rows,
+            $this->columns,
+        );
     }
 
     /**
      * Performs exponential expression by scalar value
      *
      * @param int|float $value Exponent
-     *
-     * @return self<int|float>
      */
     public function powByScalar(int|float $value): self
     {
-        $result = [];
-        foreach ($this->matrix as $row) {
-            $resultRow = [];
-            foreach ($row as $cellValue) {
-                $resultRow[] = $cellValue ** $value;
-            }
-            $result[] = $resultRow;
+        $backend = Backends::resolve();
+        if ($backend instanceof ArrayBackendInterface) {
+            return self::fromCells(
+                $backend->powByScalar($this->asRows(), (float) $value, $this->rows, $this->columns),
+                $this->rows,
+                $this->columns,
+            );
         }
 
-        return new self($result);
+        return self::fromCells(
+            $backend->powByScalar($this->asBuffer(), (float) $value, $this->rows, $this->columns),
+            $this->rows,
+            $this->columns,
+        );
     }
 
     /**
      * Performs addition of two matrices
      *
-     * @param self<int|float> $value Right operand
+     * @param self $value Right operand
      *
-     * @return self<int|float> Sum of two matrices
+     * @return self Sum of two matrices
+     *
+     * @throws InvalidArgumentException When the dimensions do not match
      */
     public function sum(self $value): self
     {
@@ -265,25 +294,30 @@ final class Matrix implements
             throw new InvalidArgumentException('Inconsistent matrix supplied');
         }
 
-        $result = [];
-        foreach ($this->matrix as $rowIndex => $row) {
-            $anotherRow = $value->matrix[$rowIndex];
-            $resultRow  = [];
-            foreach ($row as $columnIndex => $cellValue) {
-                $resultRow[] = $cellValue + $anotherRow[$columnIndex];
-            }
-            $result[] = $resultRow;
+        $backend = Backends::resolve();
+        if ($backend instanceof ArrayBackendInterface) {
+            return self::fromCells(
+                $backend->sum($this->asRows(), $value->asRows(), $this->rows, $this->columns),
+                $this->rows,
+                $this->columns,
+            );
         }
 
-        return new self($result);
+        return self::fromCells(
+            $backend->sum($this->asBuffer(), $value->asBuffer(), $this->rows, $this->columns),
+            $this->rows,
+            $this->columns,
+        );
     }
 
     /**
      * Performs subtraction of two matrices
      *
-     * @param self<int|float> $value Right operand
+     * @param self $value Right operand
      *
-     * @return self<int|float> Difference of two matrices
+     * @return self Difference of two matrices
+     *
+     * @throws InvalidArgumentException When the dimensions do not match
      */
     public function subtract(self $value): self
     {
@@ -291,39 +325,43 @@ final class Matrix implements
             throw new InvalidArgumentException('Inconsistent matrix supplied');
         }
 
-        $result = [];
-        foreach ($this->matrix as $rowIndex => $row) {
-            $anotherRow = $value->matrix[$rowIndex];
-            $resultRow  = [];
-            foreach ($row as $columnIndex => $cellValue) {
-                $resultRow[] = $cellValue - $anotherRow[$columnIndex];
-            }
-            $result[] = $resultRow;
+        $backend = Backends::resolve();
+        if ($backend instanceof ArrayBackendInterface) {
+            return self::fromCells(
+                $backend->subtract($this->asRows(), $value->asRows(), $this->rows, $this->columns),
+                $this->rows,
+                $this->columns,
+            );
         }
 
-        return new self($result);
+        return self::fromCells(
+            $backend->subtract($this->asBuffer(), $value->asBuffer(), $this->rows, $this->columns),
+            $this->rows,
+            $this->columns,
+        );
     }
 
     /**
      * Checks if the given matrix equals to another one
      *
-     * @param self<int|float> $another Another matrix
+     * The cells are compared as storage: a single `memcmp` over two buffers, the packed doubles of each row for
+     * two lists of rows, and a matrix of each form converts the rows side into a buffer first. All three are
+     * bit-exact, and deliberately stricter than `==` on the numbers the bits stand for in two corner cases:
+     * a `-0.0` cell does not match a `0.0` one, and two `NAN` cells with the same bit pattern do match. Both
+     * follow from comparing memory, and neither can arise from the integral values these matrices usually hold.
+     *
+     * @param self $another Another matrix
      */
     public function equals(self $another): bool
     {
         if ($another->rows !== $this->rows || $another->columns !== $this->columns) {
             return false;
         }
-        foreach ($this->matrix as $rowIndex => $row) {
-            $anotherRow = $another->matrix[$rowIndex];
-            foreach ($row as $columnIndex => $cellValue) {
-                if ($cellValue !== $anotherRow[$columnIndex]) {
-                    return false;
-                }
-            }
+        if (is_array($this->cells) && is_array($another->cells)) {
+            return Float64Buffer::identicalRows($this->cells, $another->cells);
         }
 
-        return true;
+        return Float64Buffer::identical($this->asBuffer(), $another->asBuffer(), $this->rows * $this->columns);
     }
 
     /**
@@ -331,7 +369,7 @@ final class Matrix implements
      *
      * @param DoOperationHook $hook Instance of current hook
      *
-     * @return self<int|float> Result of operation
+     * @return self Result of operation
      */
     public static function __doOperation(DoOperationHook $hook): self
     {
@@ -409,7 +447,7 @@ final class Matrix implements
      * Unlike the operation and comparison hooks this handler never throws: it runs inside an FFI
      * callback, and PHP escalates any exception crossing that boundary into an engine-level
      * fatal error. Cast types that are not implemented here defer to the default engine behaviour
-     * via {@see CastObjectHook::proceed()} — on the z-engine dev lines this package tracks that
+     * via {@see CastObjectHook::proceed()} — on the z-engine release lines this package tracks that
      * fall-through behaves exactly like an uninstalled handler, so failed numeric casts propagate
      * to the engine caller, which emits its own warning and substitutes the value 1.
      *
@@ -486,12 +524,147 @@ final class Matrix implements
     }
 
     /**
+     * Builds a matrix around cells a driver has just computed
+     *
+     * Every operation ends here: a driver returns the cells it computed, in its own storage form, and they become
+     * the storage of the result as they are — a buffer without a single cell crossing back into PHP, rows without
+     * a single cell being copied. The constructor is bypassed because its job — validating input and converting it
+     * to float64 — is already done by construction.
+     *
+     * @param CData|non-empty-list<non-empty-list<float>> $cells   Cells the caller hands over ownership of
+     * @param positive-int                                $rows    Number of rows the cells form
+     * @param positive-int                                $columns Number of columns the cells form
+     */
+    private static function fromCells(CData|array $cells, int $rows, int $columns): self
+    {
+        self::$reflection ??= new ReflectionClass(self::class);
+
+        $matrix          = self::$reflection->newInstanceWithoutConstructor();
+        $matrix->cells   = $cells;
+        $matrix->rows    = $rows;
+        $matrix->columns = $columns;
+
+        return $matrix;
+    }
+
+    /**
+     * Returns the cells of this matrix as rows, converting a buffer if that is how they are stored
+     *
+     * @return non-empty-list<non-empty-list<float>>
+     */
+    private function asRows(): array
+    {
+        $cells = $this->cells;
+
+        return is_array($cells) ? $cells : Float64Buffer::toRows($cells, $this->rows, $this->columns);
+    }
+
+    /**
+     * Returns the cells of this matrix as a buffer, converting rows if that is how they are stored
+     */
+    private function asBuffer(): CData
+    {
+        $cells = $this->cells;
+
+        return $cells instanceof CData ? $cells : Float64Buffer::fromRows($cells, $this->rows * $this->columns);
+    }
+
+    /**
+     * Validates the constructor argument into rows of PHP floats, the storage of the pure-PHP driver
+     *
+     * @param non-empty-list<mixed> $matrix  Rows of the constructor argument
+     * @param positive-int          $columns Number of columns every row must have
+     *
+     * @return non-empty-list<non-empty-list<float>>
+     *
+     * @throws InvalidArgumentException When a row or a cell is invalid
+     */
+    private static function validateIntoRows(array $matrix, int $columns): array
+    {
+        $result = [];
+        foreach ($matrix as $rowIndex => $row) {
+            $resultRow = [];
+            foreach (self::validateCells($row, $rowIndex, $columns) as $columnIndex => $cellValue) {
+                if (!is_int($cellValue) && !is_float($cellValue)) {
+                    throw self::invalidCell($rowIndex, $columnIndex);
+                }
+                // Appending as a float is where an int becomes one: the single conversion this storage makes
+                $resultRow[] = (float) $cellValue;
+            }
+            $result[] = $resultRow;
+        }
+
+        /** @var non-empty-list<non-empty-list<float>> */
+        return $result;
+    }
+
+    /**
+     * Checks that one row of the constructor argument has the expected shape, and returns its cells
+     *
+     * @param mixed        $row      Candidate row, straight out of the argument
+     * @param int          $rowIndex Position of the row, for the message
+     * @param positive-int $columns  Number of columns every row must have
+     *
+     * @return non-empty-list<mixed> Cells of the row, not validated yet
+     *
+     * @throws InvalidArgumentException When the row is not a list of the expected length
+     */
+    private static function validateCells(mixed $row, int $rowIndex, int $columns): array
+    {
+        $cells = self::validateRow($row, $rowIndex);
+        if (count($cells) !== $columns) {
+            throw new InvalidArgumentException('All matrix rows should have the same number of columns');
+        }
+
+        return $cells;
+    }
+
+    /**
+     * Builds the exception for a cell that is neither an int nor a float
+     *
+     * @param int $rowIndex    Row of the cell
+     * @param int $columnIndex Column of the cell
+     */
+    private static function invalidCell(int $rowIndex, int $columnIndex): InvalidArgumentException
+    {
+        return new InvalidArgumentException(
+            sprintf('Matrix value at [%d][%d] should be either an int or a float', $rowIndex, $columnIndex),
+        );
+    }
+
+    /**
+     * Checks that one row of the constructor argument is a non-empty list, and returns it
+     *
+     * @param mixed $row      Candidate row, straight out of the argument
+     * @param int   $rowIndex Position of the row, for the message
+     *
+     * @return non-empty-list<mixed> The row itself, once it is known to be one
+     *
+     * @throws InvalidArgumentException When the row is not a non-empty list
+     */
+    private static function validateRow(mixed $row, int $rowIndex): array
+    {
+        if (!is_array($row) || !array_is_list($row)) {
+            throw new InvalidArgumentException(
+                sprintf('Matrix row %d should be a list of values with sequential keys, starting from 0', $rowIndex),
+            );
+        }
+        if ($row === []) {
+            throw new InvalidArgumentException('Matrix should contain at least one column');
+        }
+
+        return $row;
+    }
+
+    /**
      * Returns a human-readable representation of this matrix, one row per line
      */
     private function toString(): string
     {
         $rows = [];
-        foreach ($this->matrix as $row) {
+        foreach ($this->toArray() as $row) {
+            // Integral floats stringify without a fractional part, so a matrix of whole numbers still reads
+            // as "[1, 2, 3]" rather than "[1.0, 2.0, 3.0]"
             $rows[] = '[' . implode(', ', $row) . ']';
         }
 

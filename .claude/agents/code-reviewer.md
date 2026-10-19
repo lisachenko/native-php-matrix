@@ -32,22 +32,37 @@ Review against the checklist below, in this order of severity.
 
 ## 2. Version pins (blocking)
 
-- `composer.json` must keep `"php": "^8.4"` and `"lisachenko/z-engine": "~8.4.2 || ~8.5.0"`
-  — one stable z-engine line per supported PHP minor, resolved by Composer against the
-  running PHP.
+- `composer.json` must keep `"php": "^8.4"` and
+  `"lisachenko/z-engine": "~8.4.2 || ~8.5.0 || 8.6.x-dev"` — one z-engine line per
+  supported PHP minor, resolved by Composer against the running PHP: stable tags for 8.4
+  and 8.5, the `8.6.x-dev` development line for 8.6 until z-engine tags it (then it
+  becomes `~8.6.0` and `"prefer-stable": true` is dropped in the same change). The root
+  `"prefer-stable": true` is what keeps 8.4/8.5 on their tags while the dev flag is
+  present; a diff that removes it before then, or adds `"minimum-stability": "dev"`, is
+  rejected.
 - Any diff that widens either constraint beyond the minors z-engine has definitions for
   (`>=8.4`, a `^8.4` z-engine constraint that would span future lines), or bypasses
   `Core::init()`'s version guard, is rejected outright. Offsets into engine structures are
   minor-version specific; loosening the pin trades a clear error for memory corruption.
-- CI must run on PHP 8.4 and 8.5 with `ffi.enable=1` and `opcache.jit=off`.
+- CI must run on PHP 8.4, 8.5 and 8.6 with `ffi.enable=1` and `opcache.jit=off`.
 
-## 3. PHPStan generics honesty (blocking)
+## 3. float64 storage honesty (blocking)
 
-`Matrix` is `@template-covariant T of int|float`.
+`Matrix` has no generic parameter: cells are `float`, stored in the form of the driver
+active when the matrix was built — a native `double[rows * columns]` buffer for a
+`BufferBackendInterface` driver, a list of rows of PHP floats for an `ArrayBackendInterface`
+one.
 
-- Arithmetic that can widen the element type — division, exponentiation, and any mixed
-  int/float input — must be annotated as returning `Matrix<int|float>`, not `Matrix<T>`.
-- Flag any annotation that claims to preserve `T` through an operation whose maths does not.
+- Flag any reintroduced `Matrix<int>` / `Matrix<T>` annotation, or any signature claiming a
+  method returns integer cells. An integer literal in the constructor is input syntax only.
+- Flag userland cast loops over cells. The constructor converting each cell while it
+  validates it is the only conversion there should be; an array driver that lets an int into
+  a result row (an accumulator seeded with `0`) breaks the float64 promise.
+- Flag storage conversions on the hot path. Converting between buffer and rows is only for an
+  operand built under another driver, and only through `Float64Buffer::fromRows()` /
+  `toRows()` — never a PHP loop over the cells, never for operands that already match.
+- Drivers must treat their operands as read-only and return freshly computed cells.
+  Returning an operand, or writing into one, is a blocking finding.
 - New code must be clean at PHPStan level max; suppressing with `@phpstan-ignore` needs an
   inline justification.
 
