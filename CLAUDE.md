@@ -15,12 +15,10 @@ structures (`zend_class_entry`, `zval`, `zend_object_handlers`) by byte offset, 
 those offsets change on every PHP minor release. Running against the wrong minor
 does not throw a nice exception; it reads and writes the wrong memory.
 
-That is why z-engine is required as **`~8.4.2 || ~8.5.0 || 8.6.x-dev`**: Composer
-resolves the line matching the running PHP (`8.4.x` on PHP 8.4, `8.5.x` on PHP 8.5,
-z-engine `master` — branch-aliased `8.6.x-dev` — on PHP 8.6). Each line declares its
-own `~8.4.0`/`~8.5.0`/`~8.6.0` platform requirement, so only one line can ever satisfy
-a given runtime. 8.4 and 8.5 are stable tags; 8.6 rides the development line until
-z-engine tags it. `ZEngine\Core::init()` (called from `bootstrap.php`) enforces the
+That is why z-engine is required as **`~8.4.2 || ~8.5.0 || ~8.6.0`**: Composer
+resolves the stable release line matching the running PHP (`8.4.x` on PHP 8.4, `8.5.x`
+on PHP 8.5, `8.6.x` on PHP 8.6). Each line declares its own `~8.4.0`/`~8.5.0`/`~8.6.0`
+platform requirement, so only one line can ever satisfy a given runtime. `ZEngine\Core::init()` (called from `bootstrap.php`) enforces the
 exact match and aborts with a clear message. **Never "fix" an initialization failure
 by loosening the constraints past the minors z-engine has definitions for, skipping
 `Core::init()`, or defeating the guard.** If the environment's PHP does not satisfy
@@ -48,8 +46,8 @@ The suite used to carry a third line, `error_reporting=E_ALL & ~E_DEPRECATED`, f
 exactly that reason: z-engine's development line declared implicitly nullable
 parameters (e.g. `ZEngine\Type\OpLine::__construct()`) and PHP reported the
 deprecation into every test's output. The stable releases now required
-(`~8.4.2 || ~8.5.0`) declare those parameters `?Type`, the suite passes with
-`error_reporting=E_ALL` forced on both minors, and the line has been removed. **Do
+(`~8.4.2 || ~8.5.0 || ~8.6.0`) declare those parameters `?Type`, the suite passes with
+`error_reporting=E_ALL` forced on every minor, and the line has been removed. **Do
 not add it back to silence a new diagnostic** — a deprecation appearing in the
 captured output is a signal about a dependency or about this library, and hiding it
 only moves the failure somewhere harder to find.
@@ -331,24 +329,14 @@ stable under `composer cs:fix`.
 
 ## Dependency policy
 
-- `lisachenko/z-engine` is required as **`~8.4.2 || ~8.5.0 || 8.6.x-dev`** — one line
-  per supported PHP minor, resolved by Composer to match the running PHP. 8.4 and 8.5
-  are **stable** release lines; the tilde is deliberate: it admits patch releases
+- `lisachenko/z-engine` is required as **`~8.4.2 || ~8.5.0 || ~8.6.0`** — one
+  **stable** release line per supported PHP minor, resolved by Composer to match the
+  running PHP. The tilde is deliberate: it admits patch releases
   within a line (`8.4.3`, `8.5.1`) but never the next minor line, which would be built
   for a PHP this package does not claim to support.
-- 8.6 rides z-engine's **development line**, `8.6.x-dev` (`master`, branch-aliased),
-  because z-engine has not tagged 8.6 yet. When it does, replace `8.6.x-dev` with the
-  tag's tilde constraint (`~8.6.0`) **and** drop `"prefer-stable"` in a single change.
-- An explicit dev constraint carries its own root stability flag, so this package's
-  own installs (and CI) resolve `master` on PHP 8.6 without `"minimum-stability":
-  "dev"`. That flag applies to the whole package, though, so it would also admit the
-  `8.4`/`8.5` development branches on those minors — which is why the root carries
-  `"prefer-stable": true`: it keeps PHP 8.4 and 8.5 on their stable tags. Do not add
-  `"minimum-stability": "dev"`.
-- **Stability flags do not propagate to consumers.** Until the 8.6 tag exists, a
-  project on PHP 8.6 must itself require `lisachenko/z-engine:8.6.x-dev` at its root
-  (or set `"minimum-stability": "dev"` with `"prefer-stable": true`). Consumers on 8.4
-  and 8.5 need nothing extra.
+- Nothing in `require` is a development branch, so the root carries neither
+  `"minimum-stability": "dev"` nor `"prefer-stable"`, and consumers need no
+  stability configuration on any supported minor. Do not add either.
 - PHP stays at `^8.4`, in lockstep with the set of z-engine lines this package
   tracks: a new PHP minor is added here only together with the z-engine line built
   for it, and never one without the other.
