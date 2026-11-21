@@ -56,7 +56,7 @@ array(1) {
   JIT rewrites the executor internals z-engine hooks. There is no `error_reporting` line
   any more: it existed only to hide a deprecation z-engine's development line raised
   (implicitly nullable parameters), and the stable releases this package requires
-  (`~8.4.2 || ~8.5.0`) raise none. Do not add one back — PHPUnit's `.phpt` runner forces
+  (`~8.4.2 || ~8.5.0 || ~8.6.0`) raise none. Do not add one back — PHPUnit's `.phpt` runner forces
   `display_errors=1`, so a diagnostic reaching your captured output is real information,
   not noise to suppress.
 - **An operator cannot throw into userland.** `__doOperation`/`__compare` run inside an FFI
