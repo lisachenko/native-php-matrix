@@ -14,8 +14,8 @@ permissions:
 # runs on PHP 8.4, 8.5 and 8.6 in parallel. 8.4 and 8.5 resolve stable tags; 8.6
 # resolves z-engine's master (branch-aliased 8.6.x-dev) until z-engine tags 8.6. The
 # 8.6 legs are set up exactly as z-engine's own CI sets up its 8.6 line (plain
-# php-version '8.6', which setup-php serves pre-release builds for too) and, like
-# there, they are required, not allowed to fail.
+# php-version '8.6', the GA release) and, like there, they are required, not
+# allowed to fail.
 jobs:
   tests:
     name: Tests (PHP ${{ matrix.php }})
